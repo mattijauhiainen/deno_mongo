@@ -19,8 +19,6 @@ export class MongoClient {
         : options;
       const cluster = new Cluster(parsedOptions);
       await cluster.connect();
-      await cluster.authenticate();
-      await cluster.updateMaster();
       this.#cluster = cluster;
     } catch (e) {
       throw new MongoError(`Connection failed: ${e.message || e}`);
@@ -58,5 +56,9 @@ export class MongoClient {
 
   close() {
     if (this.#cluster) this.#cluster.close();
+  }
+
+  toString() {
+    return this.#cluster?.toString() || "Unitialized client"
   }
 }
