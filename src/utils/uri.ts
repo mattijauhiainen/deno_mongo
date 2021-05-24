@@ -208,5 +208,8 @@ function parseNormalUrl(url: string): ConnectOptions {
   if (data.search.safe) {
     connectOptions.safe = data.search.safe === "true";
   }
+  if (data.search.replicaSet) {
+    connectOptions.replicaSet = data.search.replicaSet;
+  }
   return connectOptions;
 }

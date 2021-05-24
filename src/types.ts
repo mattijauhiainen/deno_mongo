@@ -20,6 +20,8 @@ export interface ConnectOptions {
   servers: Server[];
   retryWrites?: boolean;
   appname?: string;
+  // TODO: URI parse should set the replicaSet?
+  replicaSet?: string;
 }
 
 export interface CountOptions {

@@ -99,12 +99,11 @@ export class MongoServer {
     this.protocol = protocol;
   }
 
-  private async updateState(onDiscovery?: OnDiscovery) {
+  private async updateState() {
     assert(this.protocol, "Tried to poll for ismaster while not authenticated");
     const response = await this.protocol.commandSingle(
       "admin",
-      //   { ismaster: 1 }
-      { hello: 1 },
+      { ismaster: 1 }
     );
     console.log(response);
     if (response.secondary === true && !!response.setName) {
@@ -115,12 +114,6 @@ export class MongoServer {
       this.state = "RSArbiter";
     } else {
       this.state = "Unknown";
-    }
-
-    if (response.hosts?.length > 0 && typeof onDiscovery === "function") {
-      await Promise.all(
-        response.hosts.map((hostString: string) => onDiscovery(hostString)),
-      );
     }
   }
 
