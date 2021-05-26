@@ -13,6 +13,15 @@ import { parse as parseYaml } from "https://deno.land/std/encoding/yaml.ts";
 // - ReplicasetWithPrimary
 // - ReplicasetWithoutPrimary
 // - Mongos (sharded)
+const UNKNOWN_DEFAULT: ServerDescription = {
+  type: "Unknown",
+  electionId: null,
+  setVersion: null,
+  setName: null,
+  minWireVersion: 0,
+  maxWireVersion: 0,
+  hosts: [],
+};
 
 function topologyVersionIsStale(
   newVersion: TopologyVersion,
@@ -42,6 +51,52 @@ export type ServerType =
   | "RSOther"
   | "RSGhost"
   | "LoadBalanced";
+
+interface IsMasterResponse {
+  ok: number;
+  ismaster: boolean;
+  isWritablePrimary?: boolean;
+  isreplicaset?: boolean;
+  secondary?: boolean;
+  minWireVersion: number;
+  maxWireVersion: number;
+  setName?: string;
+  hosts?: string[];
+  arbiters?: string[];
+  passives?: string[];
+  hidden?: boolean;
+  arbiterOnly?: boolean;
+  topologyVersion?: TopologyVersion;
+  me?: string;
+  primary?: string;
+  setVersion?: number;
+  electionId?: ElectionId;
+  msg?: string;
+}
+
+function typeFromResponse(response: IsMasterResponse): ServerType {
+  if (response.arbiterOnly === true && !!response.setName) {
+    return "RSArbiter";
+  }
+  if (response.isreplicaset === true) return "RSGhost";
+  if (
+    (response.ismaster === true || response.isWritablePrimary === true) &&
+    !!response.setName
+  ) {
+    return "RSPrimary";
+  }
+  if (
+    response.setName &&
+    (response.hidden ||
+      (!response.ismaster && !response.secondary && !response.arbiterOnly))
+  ) {
+    return "RSOther";
+  }
+  if (response.secondary && !!response.setName) return "RSSecondary";
+  if (response.msg === "isdbgrid") return "Mongos";
+
+  return "Unknown";
+}
 
 export type TopologyType =
   | "Single"
@@ -107,34 +162,284 @@ class Topology {
     });
   }
 
+  updateRSFromPrimary(
+    hostAndPort: string,
+    response: IsMasterResponse,
+    props: Partial<ServerDescription> & { type: ServerType },
+  ) {
+    if (!this.#serverDescriptions.has(hostAndPort)) {
+      console.warn(
+        `Ignoring response for server which is no longer monitored (${hostAndPort})`,
+      );
+      return;
+    }
+
+    if (this.#setName === null) {
+      this.#setName = response.setName!;
+    } else if (this.#setName !== response.setName) {
+      this.#serverDescriptions.delete(hostAndPort);
+      this.checkIfHasPrimary();
+      return;
+    }
+
+    if (response.setVersion && response.electionId) {
+      if (
+        this.#maxElectionId &&
+        this.#maxSetVersion &&
+        (this.#maxSetVersion > response.setVersion ||
+          (this.#maxSetVersion === response.setVersion &&
+            BigInt(this.#maxElectionId.$oid) >
+              BigInt(response.electionId.$oid)))
+      ) {
+        this.#serverDescriptions.set(hostAndPort, UNKNOWN_DEFAULT);
+        this.checkIfHasPrimary();
+        return;
+      }
+
+      this.#maxElectionId = response.electionId;
+    }
+    if (
+      response.setVersion &&
+      (
+        this.#maxSetVersion === null ||
+        // TODO: Initialize as nulls?
+        this.#maxSetVersion === undefined ||
+        response.setVersion > this.#maxSetVersion
+      )
+    ) {
+      this.#maxSetVersion = response.setVersion;
+    }
+
+    for (const peerHostAndPort of this.#serverDescriptions.keys()) {
+      const peer = this.#serverDescriptions.get(peerHostAndPort);
+      if (hostAndPort !== peerHostAndPort && peer?.type === "RSPrimary") {
+        this.#serverDescriptions.set(peerHostAndPort, UNKNOWN_DEFAULT);
+        // TODO:
+        // # See note below about invalidating an old primary.
+        // replace the server with a default ServerDescription of type "Unknown"
+      }
+    }
+
+    const peers = [
+      ...(response.hosts || []),
+      ...(response.arbiters || []),
+      ...(response.passives || []),
+    ];
+
+    peers
+      .filter((hostAndPort) => !this.#serverDescriptions.has(hostAndPort))
+      .forEach((hostAndPort) => this.addInitialServerDescription(hostAndPort));
+
+    Array.from(this.#serverDescriptions.keys()).forEach((hostAndPort) => {
+      if (!peers.includes(hostAndPort)) {
+        this.#serverDescriptions.delete(hostAndPort);
+      }
+    });
+
+    // Only add if the 'me' matches
+    if (
+      !response.me ||
+      hostAndPort === response.me ||
+      // TODO: This propbably isn't right?
+      !response.hosts?.includes(response.me)
+    ) {
+      const serverDescription = {
+        ...props,
+        setName: response.setName,
+        minWireVersion: response.minWireVersion,
+        maxWireVersion: response.maxWireVersion,
+        hosts: response.hosts || [],
+      };
+      if (response.electionId) {
+        serverDescription.electionId = response.electionId;
+      }
+      if (response.setVersion) {
+        serverDescription.setVersion = response.setVersion;
+      }
+      this.#serverDescriptions.set(hostAndPort, serverDescription);
+    }
+    this.checkIfHasPrimary();
+  }
+
+  updateRSWithPrimaryFromMember(
+    hostAndPort: string,
+    response: IsMasterResponse,
+    props: Partial<ServerDescription> & { type: ServerType },
+  ) {
+    if (!this.#serverDescriptions.has(hostAndPort)) {
+      // While this request was on flight, another server has already
+      // reported this server not to be part of the replica set. Remove
+      // and bail
+      return;
+    }
+
+    if (this.#setName !== response.setName) {
+      this.#serverDescriptions.delete(hostAndPort);
+      this.checkIfHasPrimary();
+      return;
+    }
+
+    // TODO: Is this correct? Specs often omit "me"
+    if (response.me && hostAndPort !== response.me) {
+      this.#serverDescriptions.delete(hostAndPort);
+      this.checkIfHasPrimary();
+      return;
+    }
+
+    this.#serverDescriptions.set(hostAndPort, {
+      ...props,
+      setName: response.setName,
+      minWireVersion: response.minWireVersion,
+      maxWireVersion: response.maxWireVersion,
+      hosts: response.hosts || [],
+    });
+
+    if (
+      !Array.from(this.#serverDescriptions.values()).some((desc) =>
+        desc.type === "RSPrimary"
+      )
+    ) {
+      this.#type = "ReplicaSetNoPrimary";
+      if (response.primary) {
+        const possiblePrimary = this.#serverDescriptions.get(response.primary);
+        if (possiblePrimary?.type === "Unknown") {
+          possiblePrimary.type = "PossiblePrimary";
+        }
+      }
+    }
+  }
+
+  updateRSWithoutPrimary(
+    hostAndPort: string,
+    response: IsMasterResponse,
+    props: Partial<ServerDescription> & { type: ServerType },
+  ) {
+    if (!this.#serverDescriptions.has(hostAndPort)) {
+      // While this request was in flight, another server has already
+      // reported this server not being part of the replica set
+      return;
+    }
+
+    // TODO: How to type things better so no bang?
+    if (!this.#setName) {
+      this.#setName = response.setName!;
+    } else if (this.#setName !== response.setName) {
+      this.#serverDescriptions.delete(hostAndPort);
+      return;
+    }
+
+    this.#serverDescriptions.set(hostAndPort, {
+      ...props,
+      setName: response.setName,
+      minWireVersion: response.minWireVersion,
+      maxWireVersion: response.maxWireVersion,
+      hosts: response.hosts || [],
+    });
+
+    const peers = [
+      ...(response.hosts || []),
+      ...(response.arbiters || []),
+      ...(response.passives || []),
+    ];
+
+    peers
+      .filter((hostAndPort) => !this.#serverDescriptions.has(hostAndPort))
+      .forEach((hostAndPort) => this.addInitialServerDescription(hostAndPort));
+
+    if (
+      !Array.from(this.#serverDescriptions.values()).some((desc) =>
+        desc.type === "RSPrimary"
+      )
+    ) {
+      this.#type = "ReplicaSetNoPrimary";
+      if (response.primary) {
+        const possiblePrimary = this.#serverDescriptions.get(response.primary);
+        if (possiblePrimary?.type === "Unknown") {
+          possiblePrimary.type = "PossiblePrimary";
+        }
+      }
+    }
+
+    // TODO: Is this right? Atleast RSOther doesn't have "me" prop
+    // but it needs to be kept in set
+    if (response.me && hostAndPort !== response.me) {
+      this.#serverDescriptions.delete(hostAndPort);
+      return;
+    }
+  }
+
+  checkIfHasPrimary() {
+    for (const description of this.#serverDescriptions.values()) {
+      if (description.type === "RSPrimary") {
+        this.#type = "ReplicaSetWithPrimary";
+        return;
+      }
+    }
+    this.#type = "ReplicaSetNoPrimary";
+  }
+
   updateServerDescription(
     hostAndPort: string,
     response: IsMasterResponse,
   ) {
-    function typeFromResponse(response: IsMasterResponse): ServerType {
-      if (response.arbiterOnly === true && !!response.setName) {
-        return "RSArbiter";
-      }
-      if (response.isreplicaset === true) return "RSGhost";
-      if (response.ismaster === true && !!response.setName) return "RSPrimary";
-      if (
-        response.setName &&
-        (response.hidden ||
-          (!response.ismaster && !response.secondary && !response.arbiterOnly))
-      ) {
-        return "RSOther";
-      }
-      if (response.secondary && !!response.setName) return "RSSecondary";
-
-      return "Unknown";
-    }
-
     if (response.ok !== 1) {
       throw new Error(
         `Not implemented yet: ${JSON.stringify(response, null, 2)}`,
       );
     }
 
+    const props: Partial<ServerDescription> & { type: ServerType } = {
+      type: typeFromResponse(response),
+    };
+    if (response.topologyVersion) {
+      if (
+        topologyVersionIsStale(
+          response.topologyVersion,
+          this.#serverDescriptions.get(hostAndPort)?.topologyVersion,
+        )
+      ) {
+        console.warn(`Received stale response...`);
+        return;
+      } else {
+        props.topologyVersion = response.topologyVersion;
+      }
+    }
+
+    switch (props.type) {
+      case "RSPrimary":
+        this.updateRSFromPrimary(hostAndPort, response, props);
+        break;
+      case "RSArbiter":
+      case "RSOther":
+      case "RSSecondary":
+        if (this.#type === "ReplicaSetWithPrimary") {
+          this.updateRSWithPrimaryFromMember(hostAndPort, response, props);
+        }
+        if (this.#type === "ReplicaSetNoPrimary" || this.#type === "Unknown") {
+          this.updateRSWithoutPrimary(hostAndPort, response, props);
+        }
+        break;
+      case "Mongos":
+        this.#serverDescriptions.delete(hostAndPort);
+        this.checkIfHasPrimary();
+        break;
+      case "RSGhost":
+        this.#serverDescriptions.set(hostAndPort, {
+          ...props,
+          minWireVersion: response.minWireVersion,
+          maxWireVersion: response.maxWireVersion,
+          hosts: response.hosts || [],
+          setName: response.setName || null,
+        });
+        if (this.#type === "ReplicaSetWithPrimary") this.checkIfHasPrimary();
+        break;
+      default:
+        throw new Error(
+          `Not handling implemented for response ${typeFromResponse(response)}`,
+        );
+    }
+
+    /*
     const {
       hosts,
       passives,
@@ -155,37 +460,38 @@ class Topology {
     };
     if (response.setVersion) serverDescription.setVersion = response.setVersion;
     if (response.electionId) serverDescription.electionId = response.electionId;
-    if (response.electionId && response.setVersion) {
-      serverDescription.electionId = response.electionId;
-      // Check if response is stale
-      if (response.ismaster) {
-        if (
-          this.#maxElectionId &&
-          this.#maxSetVersion &&
-          (this.#maxSetVersion > response.setVersion ||
-            (this.#maxSetVersion === response.setVersion &&
-              BigInt(this.#maxElectionId?.$oid) >
-                BigInt(response.electionId.$oid)))
-        ) {
-          serverDescription.type = "Unknown";
-          serverDescription.electionId = null;
-          serverDescription.setVersion = null;
-          serverDescription.setName = null;
-          this.#serverDescriptions.set(hostAndPort, serverDescription);
-          return;
-        } else {
-          this.#maxElectionId = response.electionId;
-          this.#maxSetVersion = response.setVersion;
-          for (const desc of this.#serverDescriptions.values()) {
-            if (
-              desc !== serverDescription &&
-              serverDescription.type === "RSPrimary"
-            ) {
-              desc.electionId = null;
-              desc.setVersion = null;
-              desc.setName = null;
-              desc.type = "Unknown";
-            }
+    if (response.electionId && response.setVersion && response.ismaster) {
+      // If we have setVersion and electionId, check if the response is from
+      // node that is the latest set and has highest election id. If yes, we
+      // believe he is master, and mark other conflicting masters as unknown.
+      // If not, we mark the responses server as unknown as the response is
+      // stale.
+      if (
+        this.#maxElectionId &&
+        this.#maxSetVersion &&
+        (this.#maxSetVersion > response.setVersion ||
+          (this.#maxSetVersion === response.setVersion &&
+            BigInt(this.#maxElectionId?.$oid) >
+              BigInt(response.electionId.$oid)))
+      ) {
+        serverDescription.type = "Unknown";
+        serverDescription.electionId = null;
+        serverDescription.setVersion = null;
+        serverDescription.setName = null;
+        this.#serverDescriptions.set(hostAndPort, serverDescription);
+        return;
+      } else {
+        this.#maxElectionId = response.electionId;
+        this.#maxSetVersion = response.setVersion;
+        for (const desc of this.#serverDescriptions.values()) {
+          if (
+            desc !== serverDescription &&
+            serverDescription.type === "RSPrimary"
+          ) {
+            desc.electionId = null;
+            desc.setVersion = null;
+            desc.setName = null;
+            desc.type = "Unknown";
           }
         }
       }
@@ -268,6 +574,7 @@ class Topology {
       this.#type = "ReplicaSetNoPrimary";
     }
     if (serverDescription.type === "RSGhost") serverDescription.setName = null;
+    */
   }
 
   describe() {
@@ -344,26 +651,6 @@ class Topology {
   }
 }
 
-interface IsMasterResponse {
-  ok: number;
-  ismaster: boolean;
-  isreplicaset?: boolean;
-  secondary?: boolean;
-  minWireVersion: number;
-  maxWireVersion: number;
-  setName?: string;
-  hosts?: string[];
-  arbiters?: string[];
-  passives?: string[];
-  hidden?: boolean;
-  arbiterOnly?: boolean;
-  topologyVersion?: TopologyVersion;
-  me?: string;
-  primary?: string;
-  setVersion?: number;
-  electionId?: ElectionId;
-}
-
 interface TestSample {
   description: string;
   uri: string;
@@ -397,14 +684,6 @@ async function runSpec() {
   const samplesToRun = getSpecs(
     "/Users/matti/work/rebootramen/deno_scrapers/deno_mongo/tests/unified_specs/rs",
     [
-      // /secondary/,
-      // /Discover primary with directConnection URI option/,
-      // /Discover primary with replicaSet URI option/,
-      // /Discover ghost with replicaSet URI option/,
-      // /Discover/,
-      // /Incompatible/,
-      // /primary/i,
-      // /secondary with mis/i,
       /Primary becomes mongos/,
       /Discover ghost with replicaSet URI option/,
       /Incompatible ghost/,
