@@ -23,6 +23,20 @@ const UNKNOWN_DEFAULT: ServerDescription = {
   hosts: [],
 };
 
+function normaliseResponse(response: IsMasterResponse) {
+  // TODO: Dupe it
+  response.hosts = response.hosts?.map((host) => host.toLowerCase()) ||
+    [];
+  response.arbiters = response.arbiters?.map((host) => host.toLowerCase()) ||
+    [];
+  response.passives = response.passives?.map((host) => host.toLowerCase()) ||
+    [];
+  response.primary = response.primary?.toLowerCase();
+  response.setName = response.setName?.toLowerCase();
+  response.me = response.me?.toLowerCase();
+  return response;
+}
+
 function topologyVersionIsStale(
   newVersion: TopologyVersion,
   oldVersion?: TopologyVersion,
@@ -32,7 +46,7 @@ function topologyVersionIsStale(
     return false;
   }
   if (
-    BigInt(newVersion.counter.$numberLong) >
+    BigInt(newVersion.counter.$numberLong) >=
       BigInt(oldVersion.counter.$numberLong)
   ) {
     return false;
@@ -72,6 +86,7 @@ interface IsMasterResponse {
   setVersion?: number;
   electionId?: ElectionId;
   msg?: string;
+  logicalSessionTimeoutMinutes?: number | null;
 }
 
 function typeFromResponse(response: IsMasterResponse): ServerType {
@@ -116,6 +131,7 @@ interface ServerDescription {
   topologyVersion?: TopologyVersion;
   setVersion?: number | null;
   electionId?: ElectionId | null;
+  logicalSessionTimeoutMinutes?: number | null;
 }
 
 interface TopologyVersion {
@@ -136,6 +152,7 @@ class Topology {
   #setName: string | null = null;
   #maxSetVersion?: number;
   #maxElectionId?: ElectionId;
+  #logicalSessionTimeoutMinutes: number | null = null;
 
   constructor(
     initialServerDescriptions: { host: string; port: number }[],
@@ -221,22 +238,6 @@ class Topology {
       }
     }
 
-    const peers = [
-      ...(response.hosts || []),
-      ...(response.arbiters || []),
-      ...(response.passives || []),
-    ];
-
-    peers
-      .filter((hostAndPort) => !this.#serverDescriptions.has(hostAndPort))
-      .forEach((hostAndPort) => this.addInitialServerDescription(hostAndPort));
-
-    Array.from(this.#serverDescriptions.keys()).forEach((hostAndPort) => {
-      if (!peers.includes(hostAndPort)) {
-        this.#serverDescriptions.delete(hostAndPort);
-      }
-    });
-
     // Only add if the 'me' matches
     if (
       !response.me ||
@@ -246,7 +247,7 @@ class Topology {
     ) {
       const serverDescription = {
         ...props,
-        setName: response.setName,
+        setName: response.setName || null,
         minWireVersion: response.minWireVersion,
         maxWireVersion: response.maxWireVersion,
         hosts: response.hosts || [],
@@ -259,6 +260,25 @@ class Topology {
       }
       this.#serverDescriptions.set(hostAndPort, serverDescription);
     }
+
+    const peers = [
+      ...(response.hosts || []),
+      ...(response.arbiters || []),
+      ...(response.passives || []),
+    ];
+
+    peers
+      .filter((hostAndPort) => !this.#serverDescriptions.has(hostAndPort))
+      .forEach((hostAndPort) => this.addInitialServerDescription(hostAndPort));
+
+    // Do this after we've added the primary. If the primary is not on it's
+    // own hosts list we need to remove it
+    Array.from(this.#serverDescriptions.keys()).forEach((hostAndPort) => {
+      if (!peers.includes(hostAndPort)) {
+        this.#serverDescriptions.delete(hostAndPort);
+      }
+    });
+
     this.checkIfHasPrimary();
   }
 
@@ -289,7 +309,7 @@ class Topology {
 
     this.#serverDescriptions.set(hostAndPort, {
       ...props,
-      setName: response.setName,
+      setName: response.setName || null,
       minWireVersion: response.minWireVersion,
       maxWireVersion: response.maxWireVersion,
       hosts: response.hosts || [],
@@ -331,7 +351,7 @@ class Topology {
 
     this.#serverDescriptions.set(hostAndPort, {
       ...props,
-      setName: response.setName,
+      setName: response.setName || null,
       minWireVersion: response.minWireVersion,
       maxWireVersion: response.maxWireVersion,
       hosts: response.hosts || [],
@@ -383,27 +403,25 @@ class Topology {
     hostAndPort: string,
     response: IsMasterResponse,
   ) {
-    if (response.ok !== 1) {
-      throw new Error(
-        `Not implemented yet: ${JSON.stringify(response, null, 2)}`,
-      );
-    }
-
-    // TODO: To method
     hostAndPort = hostAndPort.toLowerCase();
-    response.hosts = response.hosts?.map((host) => host.toLowerCase()) ||
-      [];
-    response.arbiters = response.arbiters?.map((host) => host.toLowerCase()) ||
-      [];
-    response.passives = response.passives?.map((host) => host.toLowerCase()) ||
-      [];
-    response.primary = response.primary?.toLowerCase();
-    response.setName = response.setName?.toLowerCase();
-    response.me = response.me?.toLowerCase();
+    response = normaliseResponse(response);
+
+    if (response.ok !== 1) {
+      this.addInitialServerDescription(hostAndPort);
+      this.checkIfHasPrimary();
+      return;
+    }
 
     const props: Partial<ServerDescription> & { type: ServerType } = {
       type: typeFromResponse(response),
     };
+    if (
+      response.logicalSessionTimeoutMinutes !== null &&
+      response.logicalSessionTimeoutMinutes !== undefined
+    ) {
+      props.logicalSessionTimeoutMinutes =
+        response.logicalSessionTimeoutMinutes;
+    }
     if (response.topologyVersion) {
       if (
         topologyVersionIsStale(
@@ -418,9 +436,34 @@ class Topology {
       }
     }
 
+    const updateLogicalSessionTimeoutMinutes = () => {
+      const descs = Array.from(this.#serverDescriptions.values()).filter(
+        (desc) =>
+          desc.type === "RSPrimary" ||
+          desc.type === "RSSecondary" ||
+          desc.type === "Mongos" ||
+          desc.type === "Standalone",
+      );
+      const timeouts = descs.reduce<number[]>(
+        (acc, { logicalSessionTimeoutMinutes }) =>
+          logicalSessionTimeoutMinutes !== null &&
+            logicalSessionTimeoutMinutes !== undefined
+            ? [...acc, logicalSessionTimeoutMinutes]
+            : acc,
+        [],
+      );
+      if (timeouts.length === 0 || timeouts.length < descs.length) {
+        this.#logicalSessionTimeoutMinutes = null;
+        return;
+      } else {
+        this.#logicalSessionTimeoutMinutes = Math.min(...timeouts);
+      }
+    };
+
     switch (props.type) {
       case "RSPrimary":
         this.updateRSFromPrimary(hostAndPort, response, props);
+        updateLogicalSessionTimeoutMinutes();
         break;
       case "RSArbiter":
       case "RSOther":
@@ -431,10 +474,12 @@ class Topology {
         if (this.#type === "ReplicaSetNoPrimary" || this.#type === "Unknown") {
           this.updateRSWithoutPrimary(hostAndPort, response, props);
         }
+        updateLogicalSessionTimeoutMinutes();
         break;
       case "Mongos":
         this.#serverDescriptions.delete(hostAndPort);
         this.checkIfHasPrimary();
+        updateLogicalSessionTimeoutMinutes();
         break;
       case "RSGhost":
         this.#serverDescriptions.set(hostAndPort, {
@@ -446,6 +491,9 @@ class Topology {
         });
         if (this.#type === "ReplicaSetWithPrimary") this.checkIfHasPrimary();
         break;
+      case "Unknown":
+        this.#serverDescriptions.delete(hostAndPort);
+        return;
       default:
         throw new Error(
           `Not handling implemented for response ${typeFromResponse(response)}`,
@@ -595,7 +643,7 @@ class Topology {
       servers: Record<string, TopologyServerDescription>;
       setName?: string | null;
       topologyType: TopologyType;
-      logicalSessionTimeoutMinutes: null;
+      logicalSessionTimeoutMinutes: number | null;
       compatible?: boolean;
       maxSetVersion?: number;
       maxElectionId?: ElectionId;
@@ -632,7 +680,7 @@ class Topology {
       ),
       setName: this.#setName,
       topologyType: this.#type,
-      logicalSessionTimeoutMinutes: null,
+      logicalSessionTimeoutMinutes: this.#logicalSessionTimeoutMinutes,
     };
     if (!this.isCompatible()) description.compatible = false;
     if (this.#maxSetVersion) description.maxSetVersion = this.#maxSetVersion;
@@ -707,7 +755,7 @@ async function runSpec() {
       /Secondary with mismatched 'me' tells us who the primary is/,
       /Primary changes setName/,
       /Member removed by reconfig/,
-      // /setVersion is ignored if there is no electionId/, // TODO: Asserts sometimes want null, while other times undefined :(
+      /setVersion is ignored if there is no electionId/,
       /Discover RSOther with directConnection URI option/,
       /Secondary mismatched me/,
       /Primary wrong setName/,
@@ -721,42 +769,42 @@ async function runSpec() {
       /Replica set discovery/,
       /New primary with equal electionId/,
       /Primary mismatched me is not removed/,
-      // /Host list differs from seeds/,
-      // /Disconnected from primary/,
+      /Host list differs from seeds/,
+      /Disconnected from primary/,
       /Discover secondary with directConnection URI option/,
       /Discover RSOther with replicaSet URI option/,
       /Primary becomes a secondary with wrong setName/,
       /Secondary wrong setName/,
-      // /Parse logicalSessionTimeoutMinutes from replica set/,
+      /Parse logicalSessionTimeoutMinutes from replica set/,
       /Primary becomes ghost/,
       /Replica set mixed case normalization/,
-      // /Record max setVersion, even from primary without electionId/,
-      // /New primary/,
-      // /Primary reports a new member/,
+      /Record max setVersion, even from primary without electionId/,
+      /New primary/,
+      /Primary reports a new member/,
       // /Replica set member and an unknown server/,
       // /Replica set member with default maxWireVersion of 0/,
       // /Primary becomes standalone/,
       // /Repeated ismaster response must be processed/,
-      // /Secondary's host list is not authoritative/,
-      // /Discover secondary with replicaSet URI option/,
+      /Secondary's host list is not authoritative/,
+      /Discover secondary with replicaSet URI option/,
       // /Incompatible arbiter/,
       /New primary with wrong setName/,
-      // /Disconnected from primary, reject primary with stale electionId/,
-      // /Primary to no primary with mismatched me/,
-      // /Disconnected from primary, reject primary with stale setVersion/,
-      // /Primary with equal topologyVersion/,
+      /Disconnected from primary, reject primary with stale electionId/,
+      /Primary to no primary with mismatched me/,
+      /Disconnected from primary, reject primary with stale setVersion/,
+      /Primary with equal topologyVersion/,
       // /Unexpected mongos/,
-      // /Non replicaSet member responds/,
-      // /Response from removed server/,
-      // /New primary/,
+      /Non replicaSet member responds/,
+      /Response from removed server/,
+      /New primary/,
       /Discover hidden with replicaSet URI option/,
-      // /Primary with newer topologyVersion/,
-      // /New primary with greater setVersion/,
+      /Primary with newer topologyVersion/,
+      /New primary with greater setVersion/,
       /Discover hidden with directConnection URI option/,
       // /Incompatible other/,
-      // /New primary with greater setVersion and electionId/,
-      // /Primaries with and without electionIds/,
-      // /replicaSet URI option causes starting topology to be RSNP/,
+      /New primary with greater setVersion and electionId/,
+      /Primaries with and without electionIds/,
+      /replicaSet URI option causes starting topology to be RSNP/,
       // /Replica set member with large maxWireVersion/,
       /Discover arbiters with directConnection URI option/,
       /Discover passives with replicaSet URI option/,
