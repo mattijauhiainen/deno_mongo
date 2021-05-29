@@ -178,6 +178,97 @@ export class Topology {
     this.#serverDescriptions.set(hostAndPort, unknownDefault());
   }
 
+  updateServerDescription(
+    hostAndPort: string,
+    response: IsMasterResponse,
+  ) {
+    hostAndPort = hostAndPort.toLowerCase();
+    response = normaliseResponse(response);
+
+    if (response.ok !== 1) {
+      this.addInitialServerDescription(hostAndPort);
+      this.checkIfHasPrimary();
+      return;
+    }
+
+    const props: ServerDescription = {
+      type: typeFromResponse(response),
+      logicalSessionTimeoutMinutes: response.logicalSessionTimeoutMinutes ??
+        null,
+      topologyVersion: response.topologyVersion ?? null,
+      setName: response.setName ?? null,
+      electionId: response.electionId ?? null,
+      setVersion: response.setVersion ?? null,
+      minWireVersion: response.minWireVersion ?? 0,
+      maxWireVersion: response.maxWireVersion ?? 0,
+      hosts: response.hosts ?? [],
+      arbiters: response.arbiters ?? [],
+      passives: response.passives ?? [],
+    };
+    if (props.topologyVersion) {
+      if (
+        topologyVersionIsStale(
+          props.topologyVersion,
+          this.#serverDescriptions.get(hostAndPort)?.topologyVersion,
+        )
+      ) {
+        console.warn(`Received stale response...`);
+        return;
+      }
+    }
+
+    switch (props.type) {
+      case "RSPrimary":
+        this.updateRSFromPrimary(hostAndPort, response, props);
+        this.updateLogicalSessionTimeoutMinutes();
+        break;
+      case "RSArbiter":
+      case "RSOther":
+      case "RSSecondary":
+        if (this.#type === "ReplicaSetWithPrimary") {
+          this.updateRSWithPrimaryFromMember(hostAndPort, response, props);
+        }
+        if (this.#type === "ReplicaSetNoPrimary" || this.#type === "Unknown") {
+          this.updateRSWithoutPrimary(hostAndPort, response, props);
+        }
+        this.updateLogicalSessionTimeoutMinutes();
+        break;
+      case "Mongos":
+        this.#serverDescriptions.delete(hostAndPort);
+        this.checkIfHasPrimary();
+        this.updateLogicalSessionTimeoutMinutes();
+        break;
+      case "RSGhost":
+        this.#serverDescriptions.set(hostAndPort, props);
+        if (this.#type === "ReplicaSetWithPrimary") this.checkIfHasPrimary();
+        break;
+      case "Standalone":
+        if (this.#type === "Unknown") {
+          if (!this.#serverDescriptions.has(hostAndPort)) return;
+          if (this.#seeds.length === 1) {
+            this.#type = "Single";
+            // TODO: Should add the desc?
+          } else {
+            this.#serverDescriptions.delete(hostAndPort);
+          }
+        } else if (this.#type === "ReplicaSetWithPrimary") {
+          this.#serverDescriptions.delete(hostAndPort);
+          this.checkIfHasPrimary();
+        } else {
+          this.#serverDescriptions.delete(hostAndPort);
+        }
+        break;
+      case "Unknown":
+        this.#serverDescriptions.delete(hostAndPort);
+        this.checkIfHasPrimary();
+        return;
+      default:
+        throw new Error(
+          `Not handling implemented for response ${typeFromResponse(response)}`,
+        );
+    }
+  }
+
   updateRSFromPrimary(
     hostAndPort: string,
     response: IsMasterResponse,
@@ -379,97 +470,6 @@ export class Topology {
       }
     }
     this.#type = "ReplicaSetNoPrimary";
-  }
-
-  updateServerDescription(
-    hostAndPort: string,
-    response: IsMasterResponse,
-  ) {
-    hostAndPort = hostAndPort.toLowerCase();
-    response = normaliseResponse(response);
-
-    if (response.ok !== 1) {
-      this.addInitialServerDescription(hostAndPort);
-      this.checkIfHasPrimary();
-      return;
-    }
-
-    const props: ServerDescription = {
-      type: typeFromResponse(response),
-      logicalSessionTimeoutMinutes: response.logicalSessionTimeoutMinutes ??
-        null,
-      topologyVersion: response.topologyVersion ?? null,
-      setName: response.setName ?? null,
-      electionId: response.electionId ?? null,
-      setVersion: response.setVersion ?? null,
-      minWireVersion: response.minWireVersion ?? 0,
-      maxWireVersion: response.maxWireVersion ?? 0,
-      hosts: response.hosts ?? [],
-      arbiters: response.arbiters ?? [],
-      passives: response.passives ?? [],
-    };
-    if (props.topologyVersion) {
-      if (
-        topologyVersionIsStale(
-          props.topologyVersion,
-          this.#serverDescriptions.get(hostAndPort)?.topologyVersion,
-        )
-      ) {
-        console.warn(`Received stale response...`);
-        return;
-      }
-    }
-
-    switch (props.type) {
-      case "RSPrimary":
-        this.updateRSFromPrimary(hostAndPort, response, props);
-        this.updateLogicalSessionTimeoutMinutes();
-        break;
-      case "RSArbiter":
-      case "RSOther":
-      case "RSSecondary":
-        if (this.#type === "ReplicaSetWithPrimary") {
-          this.updateRSWithPrimaryFromMember(hostAndPort, response, props);
-        }
-        if (this.#type === "ReplicaSetNoPrimary" || this.#type === "Unknown") {
-          this.updateRSWithoutPrimary(hostAndPort, response, props);
-        }
-        this.updateLogicalSessionTimeoutMinutes();
-        break;
-      case "Mongos":
-        this.#serverDescriptions.delete(hostAndPort);
-        this.checkIfHasPrimary();
-        this.updateLogicalSessionTimeoutMinutes();
-        break;
-      case "RSGhost":
-        this.#serverDescriptions.set(hostAndPort, props);
-        if (this.#type === "ReplicaSetWithPrimary") this.checkIfHasPrimary();
-        break;
-      case "Standalone":
-        if (this.#type === "Unknown") {
-          if (!this.#serverDescriptions.has(hostAndPort)) return;
-          if (this.#seeds.length === 1) {
-            this.#type = "Single";
-            // TODO: Should add the desc?
-          } else {
-            this.#serverDescriptions.delete(hostAndPort);
-          }
-        } else if (this.#type === "ReplicaSetWithPrimary") {
-          this.#serverDescriptions.delete(hostAndPort);
-          this.checkIfHasPrimary();
-        } else {
-          this.#serverDescriptions.delete(hostAndPort);
-        }
-        break;
-      case "Unknown":
-        this.#serverDescriptions.delete(hostAndPort);
-        this.checkIfHasPrimary();
-        return;
-      default:
-        throw new Error(
-          `Not handling implemented for response ${typeFromResponse(response)}`,
-        );
-    }
   }
 
   private updateLogicalSessionTimeoutMinutes() {
