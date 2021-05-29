@@ -228,7 +228,6 @@ export class Topology {
     switch (props.type) {
       case "RSPrimary":
         this.updateRSFromPrimary(hostAndPort, props);
-        this.updateLogicalSessionTimeoutMinutes();
         break;
       case "RSArbiter":
       case "RSOther":
@@ -241,12 +240,20 @@ export class Topology {
         ) {
           this.updateRSWithoutPrimary(hostAndPort, props);
         }
-        this.updateLogicalSessionTimeoutMinutes();
         break;
       case "Mongos":
-        this.#serverDescriptions.delete(hostAndPort);
-        this.checkIfHasPrimary();
-        this.updateLogicalSessionTimeoutMinutes();
+        if (this.#type === "Unknown") {
+          this.#type = "Sharded";
+        } else if (this.#type === "Sharded") {
+          // no-op
+        } else {
+          if (this.#type === "ReplicaSetWithPrimary") {
+            this.#serverDescriptions.delete(hostAndPort);
+            this.checkIfHasPrimary();
+          } else if (this.#type === "ReplicaSetNoPrimary") {
+            this.#serverDescriptions.delete(hostAndPort);
+          }
+        }
         break;
       case "RSGhost":
         this.#serverDescriptions.set(hostAndPort, props);
@@ -254,7 +261,6 @@ export class Topology {
         break;
       case "Standalone":
         if (this.#type === "Unknown") {
-          if (!this.#serverDescriptions.has(hostAndPort)) return;
           if (this.#seeds.length === 1) {
             this.#type = "Single";
           } else {
@@ -270,12 +276,13 @@ export class Topology {
       case "Unknown":
         this.#serverDescriptions.delete(hostAndPort);
         this.checkIfHasPrimary();
-        return;
+        break;
       default:
         throw new Error(
           `Not handling implemented for response ${typeFromResponse(response)}`,
         );
     }
+    this.updateLogicalSessionTimeoutMinutes();
   }
 
   private updateRSFromPrimary(
