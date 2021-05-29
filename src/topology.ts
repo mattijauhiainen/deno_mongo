@@ -1,14 +1,16 @@
-const unknownDefault = (): ServerDescription => ({
-  type: "Unknown",
-  electionId: null,
-  setVersion: null,
-  setName: null,
-  minWireVersion: 0,
-  maxWireVersion: 0,
-  hosts: [],
-  topologyVersion: null,
-  logicalSessionTimeoutMinutes: null,
-});
+function unknownDefault(): ServerDescription {
+  return {
+    type: "Unknown",
+    electionId: null,
+    setVersion: null,
+    setName: null,
+    minWireVersion: 0,
+    maxWireVersion: 0,
+    hosts: [],
+    topologyVersion: null,
+    logicalSessionTimeoutMinutes: null,
+  };
+}
 
 function normaliseResponse(response: IsMasterResponse) {
   return {
@@ -19,8 +21,6 @@ function normaliseResponse(response: IsMasterResponse) {
     primary: response.primary?.toLowerCase(),
     setName: response.setName?.toLowerCase(),
     me: response.me?.toLowerCase(),
-    maxWireVersion: response.maxWireVersion ?? 0,
-    minWireVersion: response.minWireVersion ?? 0,
   };
 }
 
@@ -94,12 +94,12 @@ export type TopologyType =
 export interface IsMasterResponse {
   ok: number;
   ismaster: boolean;
+  minWireVersion: number;
+  maxWireVersion: number;
 
   isWritablePrimary?: boolean;
   isreplicaset?: boolean;
   secondary?: boolean;
-  minWireVersion: number;
-  maxWireVersion: number;
   setName?: string;
   hosts?: string[];
   arbiters?: string[];
@@ -239,12 +239,6 @@ export class Topology {
     ) {
       const serverDescription = {
         ...props,
-        setName: response.setName || null,
-        minWireVersion: response.minWireVersion,
-        maxWireVersion: response.maxWireVersion,
-        hosts: response.hosts || [],
-        electionId: response.electionId || null,
-        setVersion: response.setVersion || null,
       };
       this.#serverDescriptions.set(hostAndPort, serverDescription);
     }
@@ -298,8 +292,6 @@ export class Topology {
     this.#serverDescriptions.set(hostAndPort, {
       ...props,
       setName: response.setName || null,
-      minWireVersion: response.minWireVersion,
-      maxWireVersion: response.maxWireVersion,
       hosts: response.hosts || [],
     });
 
@@ -421,10 +413,10 @@ export class Topology {
       maxWireVersion: response.maxWireVersion ?? 0,
       hosts: response.hosts ?? [],
     };
-    if (response.topologyVersion) {
+    if (props.topologyVersion) {
       if (
         topologyVersionIsStale(
-          response.topologyVersion,
+          props.topologyVersion,
           this.#serverDescriptions.get(hostAndPort)?.topologyVersion,
         )
       ) {
@@ -433,33 +425,10 @@ export class Topology {
       }
     }
 
-    const updateLogicalSessionTimeoutMinutes = () => {
-      const descs = Array.from(this.#serverDescriptions.values()).filter(
-        (desc) =>
-          desc.type === "RSPrimary" ||
-          desc.type === "RSSecondary" ||
-          desc.type === "Mongos" ||
-          desc.type === "Standalone",
-      );
-      const timeouts = descs.reduce<number[]>(
-        (acc, { logicalSessionTimeoutMinutes }) =>
-          logicalSessionTimeoutMinutes !== null
-            ? [...acc, logicalSessionTimeoutMinutes]
-            : acc,
-        [],
-      );
-      if (timeouts.length === 0 || timeouts.length < descs.length) {
-        this.#logicalSessionTimeoutMinutes = null;
-        return;
-      } else {
-        this.#logicalSessionTimeoutMinutes = Math.min(...timeouts);
-      }
-    };
-
     switch (props.type) {
       case "RSPrimary":
         this.updateRSFromPrimary(hostAndPort, response, props);
-        updateLogicalSessionTimeoutMinutes();
+        this.updateLogicalSessionTimeoutMinutes();
         break;
       case "RSArbiter":
       case "RSOther":
@@ -470,18 +439,16 @@ export class Topology {
         if (this.#type === "ReplicaSetNoPrimary" || this.#type === "Unknown") {
           this.updateRSWithoutPrimary(hostAndPort, response, props);
         }
-        updateLogicalSessionTimeoutMinutes();
+        this.updateLogicalSessionTimeoutMinutes();
         break;
       case "Mongos":
         this.#serverDescriptions.delete(hostAndPort);
         this.checkIfHasPrimary();
-        updateLogicalSessionTimeoutMinutes();
+        this.updateLogicalSessionTimeoutMinutes();
         break;
       case "RSGhost":
         this.#serverDescriptions.set(hostAndPort, {
           ...props,
-          minWireVersion: response.minWireVersion,
-          maxWireVersion: response.maxWireVersion,
           hosts: response.hosts || [],
           setName: response.setName || null,
         });
@@ -510,6 +477,29 @@ export class Topology {
         throw new Error(
           `Not handling implemented for response ${typeFromResponse(response)}`,
         );
+    }
+  }
+
+  private updateLogicalSessionTimeoutMinutes() {
+    const descs = Array.from(this.#serverDescriptions.values()).filter(
+      (desc) =>
+        desc.type === "RSPrimary" ||
+        desc.type === "RSSecondary" ||
+        desc.type === "Mongos" ||
+        desc.type === "Standalone",
+    );
+    const timeouts = descs.reduce<number[]>(
+      (acc, { logicalSessionTimeoutMinutes }) =>
+        logicalSessionTimeoutMinutes !== null
+          ? [...acc, logicalSessionTimeoutMinutes]
+          : acc,
+      [],
+    );
+    if (timeouts.length === 0 || timeouts.length < descs.length) {
+      this.#logicalSessionTimeoutMinutes = null;
+      return;
+    } else {
+      this.#logicalSessionTimeoutMinutes = Math.min(...timeouts);
     }
   }
 
