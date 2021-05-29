@@ -177,8 +177,10 @@ export class Topology {
   }
 
   private setDefaultServerDescription(hostAndPort: string) {
-    hostAndPort = hostAndPort.toLowerCase();
-    this.#serverDescriptions.set(hostAndPort, unknownDefault());
+    this.#serverDescriptions.set(
+      hostAndPort.toLowerCase(),
+      unknownDefault(),
+    );
   }
 
   updateServerDescription(
@@ -255,7 +257,6 @@ export class Topology {
           if (!this.#serverDescriptions.has(hostAndPort)) return;
           if (this.#seeds.length === 1) {
             this.#type = "Single";
-            // TODO: Should add the desc?
           } else {
             this.#serverDescriptions.delete(hostAndPort);
           }
