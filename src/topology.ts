@@ -11,6 +11,7 @@ function unknownDefault(): ServerDescription {
     passives: [],
     topologyVersion: null,
     logicalSessionTimeoutMinutes: null,
+    me: null,
   };
 }
 
@@ -131,7 +132,7 @@ interface ServerDescription {
   setVersion: number | null;
   electionId: ElectionId | null;
 
-  me?: string;
+  me: string | null;
   primary?: string;
 }
 
@@ -204,6 +205,7 @@ export class Topology {
       hosts: response.hosts ?? [],
       arbiters: response.arbiters ?? [],
       passives: response.passives ?? [],
+      me: response.me ?? null,
     };
     if (props.topologyVersion) {
       if (
@@ -219,7 +221,7 @@ export class Topology {
 
     switch (props.type) {
       case "RSPrimary":
-        this.updateRSFromPrimary(hostAndPort, response, props);
+        this.updateRSFromPrimary(hostAndPort, props);
         this.updateLogicalSessionTimeoutMinutes();
         break;
       case "RSArbiter":
@@ -271,7 +273,6 @@ export class Topology {
 
   updateRSFromPrimary(
     hostAndPort: string,
-    response: IsMasterResponse,
     props: ServerDescription,
   ) {
     if (!this.#serverDescriptions.has(hostAndPort)) {
@@ -327,10 +328,10 @@ export class Topology {
 
     // Only add if the 'me' matches
     if (
-      !response.me ||
-      hostAndPort === response.me ||
+      !props.me ||
+      hostAndPort === props.me ||
       // TODO: This propbably isn't right?
-      !response.hosts?.includes(response.me)
+      !props.hosts?.includes(props.me)
     ) {
       this.#serverDescriptions.set(hostAndPort, props);
     }
@@ -377,7 +378,7 @@ export class Topology {
     }
 
     // TODO: Is this correct? Specs often omit "me"
-    if (response.me && hostAndPort !== response.me) {
+    if (props.me && hostAndPort !== props.me) {
       this.#serverDescriptions.delete(hostAndPort);
       this.checkIfHasPrimary();
       return;
@@ -447,7 +448,7 @@ export class Topology {
 
     // TODO: Is this right? Atleast RSOther doesn't have "me" prop
     // but it needs to be kept in set
-    if (response.me && hostAndPort !== response.me) {
+    if (props.me && hostAndPort !== props.me) {
       this.#serverDescriptions.delete(hostAndPort);
       return;
     }
