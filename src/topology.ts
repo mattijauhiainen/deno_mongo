@@ -383,12 +383,13 @@ export class Topology {
         this.setDefaultServerDescription(peerHostAndPort)
       );
 
-    // If the primary is not on it's own hosts list we need to remove it
-    Array.from(this.#serverDescriptions.keys()).forEach((hostAndPort) => {
-      if (!peers.includes(hostAndPort)) {
-        this.#serverDescriptions.delete(hostAndPort);
+    // Delete anything that is not in peers. If the primary itself is not on it's
+    // own peers list we need to remove it too
+    for (const descHostAndPort of this.#serverDescriptions.keys()) {
+      if (!peers.includes(descHostAndPort)) {
+        this.#serverDescriptions.delete(descHostAndPort);
       }
-    });
+    }
 
     this.checkIfHasPrimary();
   }
@@ -503,9 +504,10 @@ export class Topology {
   }
 
   private getPrimary() {
-    return Array.from(this.#serverDescriptions.values()).find((desc) =>
-      desc.type === "RSPrimary"
-    );
+    for (const desc of this.#serverDescriptions.values()) {
+      if (desc.type === "RSPrimary") return desc;
+    }
+    return undefined;
   }
 
   isCompatible() {
@@ -537,13 +539,7 @@ export class Topology {
         (acc, [hostAndPort, desc]) => {
           return {
             ...acc,
-            [hostAndPort]: {
-              setName: desc.setName,
-              type: desc.type,
-              topologyVersion: desc.topologyVersion,
-              setVersion: desc.setVersion,
-              electionId: desc.electionId,
-            },
+            [hostAndPort]: desc,
           };
         },
         {},
