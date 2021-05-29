@@ -35,8 +35,10 @@ function getSpecs(
 }
 
 async function runSpec() {
-  const samplesToRun = getSpecs(
-    "/Users/matti/work/rebootramen/deno_scrapers/deno_mongo/tests/unified_specs/rs",
+  const specDir =
+    "/Users/matti/work/rebootramen/deno_scrapers/deno_mongo/tests/unified_specs";
+  const rsSamples = getSpecs(
+    `${specDir}/rs`,
     [
       /Primary becomes mongos/,
       /Discover ghost with replicaSet URI option/,
@@ -104,6 +106,13 @@ async function runSpec() {
       /Discover primary with replicaSet URI optio/,
     ],
   );
+
+  const shardedSamples = getSpecs(`${specDir}/sharded`);
+
+  const samplesToRun = [
+    ...rsSamples,
+    ...shardedSamples,
+  ];
   for (const testSample of samplesToRun) {
     console.log(`${testSample.description}...`);
     const options = await parse(testSample.uri);
