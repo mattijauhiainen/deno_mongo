@@ -7,22 +7,21 @@ const unknownDefault = (): ServerDescription => ({
   maxWireVersion: 0,
   hosts: [],
   topologyVersion: null,
+  logicalSessionTimeoutMinutes: null,
 });
 
 function normaliseResponse(response: IsMasterResponse) {
-  // TODO: Dupe it
-  response.hosts = response.hosts?.map((host) => host.toLowerCase()) ||
-    [];
-  response.arbiters = response.arbiters?.map((host) => host.toLowerCase()) ||
-    [];
-  response.passives = response.passives?.map((host) => host.toLowerCase()) ||
-    [];
-  response.primary = response.primary?.toLowerCase();
-  response.setName = response.setName?.toLowerCase();
-  response.me = response.me?.toLowerCase();
-  response.maxWireVersion = response.maxWireVersion ?? 0;
-  response.minWireVersion = response.minWireVersion ?? 0;
-  return response;
+  return {
+    ...response,
+    hosts: response.hosts?.map((host) => host.toLowerCase()) || [],
+    arbiters: response.arbiters?.map((host) => host.toLowerCase()) || [],
+    passives: response.passives?.map((host) => host.toLowerCase()) || [],
+    primary: response.primary?.toLowerCase(),
+    setName: response.setName?.toLowerCase(),
+    me: response.me?.toLowerCase(),
+    maxWireVersion: response.maxWireVersion ?? 0,
+    minWireVersion: response.minWireVersion ?? 0,
+  };
 }
 
 function topologyVersionIsStale(
@@ -40,41 +39,6 @@ function topologyVersionIsStale(
     return false;
   }
   return true;
-}
-
-export type ServerType =
-  | "Unknown"
-  | "Standalone"
-  | "Mongos"
-  | "PossiblePrimary"
-  | "RSPrimary"
-  | "RSSecondary"
-  | "RSArbiter"
-  | "RSOther"
-  | "RSGhost"
-  | "LoadBalanced";
-
-export interface IsMasterResponse {
-  ok: number;
-  ismaster: boolean;
-  isWritablePrimary?: boolean;
-  isreplicaset?: boolean;
-  secondary?: boolean;
-  minWireVersion: number;
-  maxWireVersion: number;
-  setName?: string;
-  hosts?: string[];
-  arbiters?: string[];
-  passives?: string[];
-  hidden?: boolean;
-  arbiterOnly?: boolean;
-  topologyVersion?: TopologyVersion;
-  me?: string;
-  primary?: string;
-  setVersion?: number;
-  electionId?: ElectionId;
-  msg?: string;
-  logicalSessionTimeoutMinutes?: number | null;
 }
 
 function typeFromResponse(response: IsMasterResponse): ServerType {
@@ -108,6 +72,18 @@ function typeFromResponse(response: IsMasterResponse): ServerType {
   return "Unknown";
 }
 
+export type ServerType =
+  | "Unknown"
+  | "Standalone"
+  | "Mongos"
+  | "PossiblePrimary"
+  | "RSPrimary"
+  | "RSSecondary"
+  | "RSArbiter"
+  | "RSOther"
+  | "RSGhost"
+  | "LoadBalanced";
+
 export type TopologyType =
   | "Single"
   | "ReplicaSetNoPrimary"
@@ -115,18 +91,44 @@ export type TopologyType =
   | "Sharded"
   | "Unknown";
 
+export interface IsMasterResponse {
+  ok: number;
+  ismaster: boolean;
+
+  isWritablePrimary?: boolean;
+  isreplicaset?: boolean;
+  secondary?: boolean;
+  minWireVersion: number;
+  maxWireVersion: number;
+  setName?: string;
+  hosts?: string[];
+  arbiters?: string[];
+  passives?: string[];
+  hidden?: boolean;
+  arbiterOnly?: boolean;
+  topologyVersion?: TopologyVersion;
+  me?: string;
+  primary?: string;
+  setVersion?: number;
+  electionId?: ElectionId;
+  msg?: string;
+  logicalSessionTimeoutMinutes?: number | null;
+}
+
 interface ServerDescription {
   type: ServerType;
   minWireVersion: number;
   maxWireVersion: number;
-  me?: string;
   hosts: string[];
-  setName?: string | null;
+
+  logicalSessionTimeoutMinutes: number | null;
+  topologyVersion: TopologyVersion | null;
+  setName: string | null;
+  setVersion: number | null;
+  electionId: ElectionId | null;
+
+  me?: string;
   primary?: string;
-  topologyVersion?: TopologyVersion | null;
-  setVersion?: number | null;
-  electionId?: ElectionId | null;
-  logicalSessionTimeoutMinutes?: number | null;
 }
 
 interface TopologyVersion {
@@ -146,8 +148,8 @@ export class Topology {
   #serverDescriptions: Map<string, ServerDescription> = new Map();
   #type: TopologyType = "Unknown";
   #setName: string | null = null;
-  #maxSetVersion?: number;
-  #maxElectionId?: ElectionId;
+  #maxSetVersion: number | null = null;
+  #maxElectionId: ElectionId | null = null;
   #logicalSessionTimeoutMinutes: number | null = null;
 
   constructor(
@@ -175,7 +177,7 @@ export class Topology {
   updateRSFromPrimary(
     hostAndPort: string,
     response: IsMasterResponse,
-    props: Partial<ServerDescription> & { type: ServerType },
+    props: ServerDescription,
   ) {
     if (!this.#serverDescriptions.has(hostAndPort)) {
       console.warn(
@@ -212,8 +214,6 @@ export class Topology {
       response.setVersion &&
       (
         this.#maxSetVersion === null ||
-        // TODO: Initialize as nulls?
-        this.#maxSetVersion === undefined ||
         response.setVersion > this.#maxSetVersion
       )
     ) {
@@ -273,7 +273,7 @@ export class Topology {
   updateRSWithPrimaryFromMember(
     hostAndPort: string,
     response: IsMasterResponse,
-    props: Partial<ServerDescription> & { type: ServerType },
+    props: ServerDescription,
   ) {
     if (!this.#serverDescriptions.has(hostAndPort)) {
       // While this request was on flight, another server has already
@@ -321,7 +321,7 @@ export class Topology {
   updateRSWithoutPrimary(
     hostAndPort: string,
     response: IsMasterResponse,
-    props: Partial<ServerDescription> & { type: ServerType },
+    props: ServerDescription,
   ) {
     if (!this.#serverDescriptions.has(hostAndPort)) {
       // While this request was in flight, another server has already
@@ -378,6 +378,15 @@ export class Topology {
   }
 
   checkIfHasPrimary() {
+    // const rsTypes: TopologyType[] = [
+    //   "ReplicaSetWithPrimary",
+    //   "ReplicaSetNoPrimary",
+    // ];
+    // if (!rsTypes.includes(this.#type)) {
+    //   throw new Error(
+    //     "Tried to update replica set primary status for non-replicaset topology",
+    //   );
+    // }
     for (const description of this.#serverDescriptions.values()) {
       if (description.type === "RSPrimary") {
         this.#type = "ReplicaSetWithPrimary";
@@ -400,17 +409,18 @@ export class Topology {
       return;
     }
 
-    const props: Partial<ServerDescription> & { type: ServerType } = {
+    const props: ServerDescription = {
       type: typeFromResponse(response),
+      logicalSessionTimeoutMinutes: response.logicalSessionTimeoutMinutes ??
+        null,
+      topologyVersion: response.topologyVersion ?? null,
+      setName: response.setName ?? null,
+      electionId: response.electionId ?? null,
+      setVersion: response.setVersion ?? null,
+      minWireVersion: response.minWireVersion ?? 0,
+      maxWireVersion: response.maxWireVersion ?? 0,
+      hosts: response.hosts ?? [],
     };
-    if (
-      response.logicalSessionTimeoutMinutes !== null &&
-      response.logicalSessionTimeoutMinutes !== undefined
-    ) {
-      props.logicalSessionTimeoutMinutes =
-        response.logicalSessionTimeoutMinutes;
-    }
-    props.topologyVersion = response.topologyVersion || null;
     if (response.topologyVersion) {
       if (
         topologyVersionIsStale(
@@ -433,8 +443,7 @@ export class Topology {
       );
       const timeouts = descs.reduce<number[]>(
         (acc, { logicalSessionTimeoutMinutes }) =>
-          logicalSessionTimeoutMinutes !== null &&
-            logicalSessionTimeoutMinutes !== undefined
+          logicalSessionTimeoutMinutes !== null
             ? [...acc, logicalSessionTimeoutMinutes]
             : acc,
         [],
@@ -504,50 +513,6 @@ export class Topology {
     }
   }
 
-  describe() {
-    type TopologyDescription = {
-      servers: Record<string, TopologyServerDescription>;
-      setName?: string | null;
-      topologyType: TopologyType;
-      logicalSessionTimeoutMinutes: number | null;
-      compatible?: boolean;
-      maxSetVersion?: number;
-      maxElectionId?: ElectionId;
-    };
-    type TopologyServerDescription = {
-      setName?: string | null;
-      type: ServerType;
-      topologyVersion?: TopologyVersion | null;
-      electionId?: ElectionId | null;
-      setVersion?: number | null;
-    };
-    const description: TopologyDescription = {
-      servers: Array.from(this.#serverDescriptions).reduce(
-        (acc, [hostAndPort, desc]) => {
-          const serverDescription: TopologyServerDescription = {
-            setName: desc.setName,
-            type: desc.type,
-          };
-          serverDescription.topologyVersion = desc.topologyVersion;
-          serverDescription.setVersion = desc.setVersion;
-          serverDescription.electionId = desc.electionId;
-          return {
-            ...acc,
-            [hostAndPort]: serverDescription,
-          };
-        },
-        {},
-      ),
-      setName: this.#setName,
-      topologyType: this.#type,
-      logicalSessionTimeoutMinutes: this.#logicalSessionTimeoutMinutes,
-    };
-    description.compatible = this.isCompatible();
-    description.maxSetVersion = this.#maxSetVersion;
-    description.maxElectionId = this.#maxElectionId;
-    return description;
-  }
-
   isCompatible() {
     const descs = Array.from(this.#serverDescriptions.values());
     if (
@@ -569,5 +534,43 @@ export class Topology {
       return false;
     }
     return true;
+  }
+
+  describe() {
+    type TopologyDescription = {
+      servers: Record<string, ServerDescription>;
+
+      setName: string | null;
+      topologyType: TopologyType;
+      logicalSessionTimeoutMinutes: number | null;
+      compatible: boolean;
+      maxSetVersion: number | null;
+      maxElectionId: ElectionId | null;
+    };
+
+    const description: TopologyDescription = {
+      servers: Array.from(this.#serverDescriptions).reduce(
+        (acc, [hostAndPort, desc]) => {
+          return {
+            ...acc,
+            [hostAndPort]: {
+              setName: desc.setName,
+              type: desc.type,
+              topologyVersion: desc.topologyVersion,
+              setVersion: desc.setVersion,
+              electionId: desc.electionId,
+            },
+          };
+        },
+        {},
+      ),
+      setName: this.#setName,
+      topologyType: this.#type,
+      logicalSessionTimeoutMinutes: this.#logicalSessionTimeoutMinutes,
+      maxSetVersion: this.#maxSetVersion,
+      compatible: this.isCompatible(),
+      maxElectionId: this.#maxElectionId,
+    };
+    return description;
   }
 }
