@@ -7,6 +7,8 @@ function unknownDefault(): ServerDescription {
     minWireVersion: 0,
     maxWireVersion: 0,
     hosts: [],
+    arbiters: [],
+    passives: [],
     topologyVersion: null,
     logicalSessionTimeoutMinutes: null,
   };
@@ -120,6 +122,8 @@ interface ServerDescription {
   minWireVersion: number;
   maxWireVersion: number;
   hosts: string[];
+  arbiters: string[];
+  passives: string[];
 
   logicalSessionTimeoutMinutes: number | null;
   topologyVersion: TopologyVersion | null;
@@ -187,37 +191,37 @@ export class Topology {
     }
 
     if (this.#setName === null) {
-      this.#setName = response.setName!;
-    } else if (this.#setName !== response.setName) {
+      this.#setName = props.setName!;
+    } else if (this.#setName !== props.setName) {
       this.#serverDescriptions.delete(hostAndPort);
       this.checkIfHasPrimary();
       return;
     }
 
-    if (response.setVersion && response.electionId) {
+    if (props.setVersion && props.electionId) {
       if (
         this.#maxElectionId &&
         this.#maxSetVersion &&
-        (this.#maxSetVersion > response.setVersion ||
-          (this.#maxSetVersion === response.setVersion &&
+        (this.#maxSetVersion > props.setVersion ||
+          (this.#maxSetVersion === props.setVersion &&
             BigInt(this.#maxElectionId.$oid) >
-              BigInt(response.electionId.$oid)))
+              BigInt(props.electionId.$oid)))
       ) {
         this.#serverDescriptions.set(hostAndPort, unknownDefault());
         this.checkIfHasPrimary();
         return;
       }
 
-      this.#maxElectionId = response.electionId;
+      this.#maxElectionId = props.electionId;
     }
     if (
-      response.setVersion &&
+      props.setVersion &&
       (
         this.#maxSetVersion === null ||
-        response.setVersion > this.#maxSetVersion
+        props.setVersion > this.#maxSetVersion
       )
     ) {
-      this.#maxSetVersion = response.setVersion;
+      this.#maxSetVersion = props.setVersion;
     }
 
     for (const peerHostAndPort of this.#serverDescriptions.keys()) {
@@ -237,16 +241,13 @@ export class Topology {
       // TODO: This propbably isn't right?
       !response.hosts?.includes(response.me)
     ) {
-      const serverDescription = {
-        ...props,
-      };
-      this.#serverDescriptions.set(hostAndPort, serverDescription);
+      this.#serverDescriptions.set(hostAndPort, props);
     }
 
     const peers = [
-      ...(response.hosts || []),
-      ...(response.arbiters || []),
-      ...(response.passives || []),
+      ...props.hosts,
+      ...props.arbiters,
+      ...props.passives,
     ];
 
     peers
@@ -273,10 +274,12 @@ export class Topology {
       // While this request was on flight, another server has already
       // reported this server not to be part of the replica set. Remove
       // and bail
+      // TODO: Should remove if it was added?
+      // TODO: Should checkIfHasPrimary?
       return;
     }
 
-    if (this.#setName !== response.setName) {
+    if (this.#setName !== props.setName) {
       this.#serverDescriptions.delete(hostAndPort);
       this.checkIfHasPrimary();
       return;
@@ -289,11 +292,7 @@ export class Topology {
       return;
     }
 
-    this.#serverDescriptions.set(hostAndPort, {
-      ...props,
-      setName: response.setName || null,
-      hosts: response.hosts || [],
-    });
+    this.#serverDescriptions.set(hostAndPort, props);
 
     if (
       !Array.from(this.#serverDescriptions.values()).some((desc) =>
@@ -318,29 +317,23 @@ export class Topology {
     if (!this.#serverDescriptions.has(hostAndPort)) {
       // While this request was in flight, another server has already
       // reported this server not being part of the replica set
+      // TODO: Should delete
       return;
     }
 
-    // TODO: How to type things better so no bang?
     if (!this.#setName) {
-      this.#setName = response.setName!;
-    } else if (this.#setName !== response.setName) {
+      this.#setName = props.setName;
+    } else if (this.#setName !== props.setName) {
       this.#serverDescriptions.delete(hostAndPort);
       return;
     }
 
-    this.#serverDescriptions.set(hostAndPort, {
-      ...props,
-      setName: response.setName || null,
-      minWireVersion: response.minWireVersion,
-      maxWireVersion: response.maxWireVersion,
-      hosts: response.hosts || [],
-    });
+    this.#serverDescriptions.set(hostAndPort, props);
 
     const peers = [
-      ...(response.hosts || []),
-      ...(response.arbiters || []),
-      ...(response.passives || []),
+      ...props.hosts,
+      ...props.arbiters,
+      ...props.passives,
     ];
 
     peers
@@ -412,6 +405,8 @@ export class Topology {
       minWireVersion: response.minWireVersion ?? 0,
       maxWireVersion: response.maxWireVersion ?? 0,
       hosts: response.hosts ?? [],
+      arbiters: response.arbiters ?? [],
+      passives: response.passives ?? [],
     };
     if (props.topologyVersion) {
       if (
@@ -447,11 +442,7 @@ export class Topology {
         this.updateLogicalSessionTimeoutMinutes();
         break;
       case "RSGhost":
-        this.#serverDescriptions.set(hostAndPort, {
-          ...props,
-          hosts: response.hosts || [],
-          setName: response.setName || null,
-        });
+        this.#serverDescriptions.set(hostAndPort, props);
         if (this.#type === "ReplicaSetWithPrimary") this.checkIfHasPrimary();
         break;
       case "Standalone":
@@ -459,6 +450,7 @@ export class Topology {
           if (!this.#serverDescriptions.has(hostAndPort)) return;
           if (this.#seeds.length === 1) {
             this.#type = "Single";
+            // TODO: Should add the desc?
           } else {
             this.#serverDescriptions.delete(hostAndPort);
           }
