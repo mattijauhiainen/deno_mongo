@@ -122,9 +122,14 @@ async function runSpec() {
     ],
   );
 
+  const singleSamples = getSpecs(
+    `${specDir}/single`,
+  );
+
   const samplesToRun = [
     ...rsSamples,
     ...shardedSamples,
+    ...singleSamples,
   ];
   for (const testSample of samplesToRun) {
     console.log(`${testSample.description}...`);
