@@ -353,30 +353,21 @@ export class Topology {
     hostAndPort: string,
     props: ServerDescription,
   ) {
-    if (!this.#serverDescriptions.has(hostAndPort)) {
-      // While this request was on flight, another server has already
-      // reported this server not to be part of the replica set. Remove
-      // and bail
-      // TODO: Should remove if it was added?
-      // TODO: Should checkIfHasPrimary?
-      return;
-    }
-
     if (this.#setName !== props.setName) {
       this.#serverDescriptions.delete(hostAndPort);
       this.checkIfHasPrimary();
       return;
     }
 
-    // TODO: Is this correct? Specs often omit "me"
+    // TODO: Is this correct? Specs often omit "me", is it guaranteed
+    // to be there?
     if (props.me && hostAndPort !== props.me) {
       this.#serverDescriptions.delete(hostAndPort);
       this.checkIfHasPrimary();
       return;
     }
 
-    this.#serverDescriptions.set(hostAndPort, props);
-
+    // TODO: Add helper
     if (
       !Array.from(this.#serverDescriptions.values()).some((desc) =>
         desc.type === "RSPrimary"
@@ -396,21 +387,12 @@ export class Topology {
     hostAndPort: string,
     props: ServerDescription,
   ) {
-    if (!this.#serverDescriptions.has(hostAndPort)) {
-      // While this request was in flight, another server has already
-      // reported this server not being part of the replica set
-      // TODO: Should delete
-      return;
-    }
-
     if (!this.#setName) {
       this.#setName = props.setName;
     } else if (this.#setName !== props.setName) {
       this.#serverDescriptions.delete(hostAndPort);
       return;
     }
-
-    this.#serverDescriptions.set(hostAndPort, props);
 
     const peers = [
       ...props.hosts,
@@ -419,8 +401,12 @@ export class Topology {
     ];
 
     peers
-      .filter((hostAndPort) => !this.#serverDescriptions.has(hostAndPort))
-      .forEach((hostAndPort) => this.setDefaultServerDescription(hostAndPort));
+      .filter((peerHostAndPort) =>
+        !this.#serverDescriptions.has(peerHostAndPort)
+      )
+      .forEach((peerHostAndPort) =>
+        this.setDefaultServerDescription(peerHostAndPort)
+      );
 
     if (
       !Array.from(this.#serverDescriptions.values()).some((desc) =>
