@@ -12,6 +12,7 @@ function unknownDefault(): ServerDescription {
     topologyVersion: null,
     logicalSessionTimeoutMinutes: null,
     me: null,
+    primary: null,
   };
 }
 
@@ -133,7 +134,7 @@ interface ServerDescription {
   electionId: ElectionId | null;
 
   me: string | null;
-  primary?: string;
+  primary: string | null;
 }
 
 interface TopologyVersion {
@@ -206,6 +207,7 @@ export class Topology {
       arbiters: response.arbiters ?? [],
       passives: response.passives ?? [],
       me: response.me ?? null,
+      primary: response.primary ?? null,
     };
     if (props.topologyVersion) {
       if (
@@ -228,10 +230,10 @@ export class Topology {
       case "RSOther":
       case "RSSecondary":
         if (this.#type === "ReplicaSetWithPrimary") {
-          this.updateRSWithPrimaryFromMember(hostAndPort, response, props);
+          this.updateRSWithPrimaryFromMember(hostAndPort, props);
         }
         if (this.#type === "ReplicaSetNoPrimary" || this.#type === "Unknown") {
-          this.updateRSWithoutPrimary(hostAndPort, response, props);
+          this.updateRSWithoutPrimary(hostAndPort, props);
         }
         this.updateLogicalSessionTimeoutMinutes();
         break;
@@ -359,7 +361,6 @@ export class Topology {
 
   updateRSWithPrimaryFromMember(
     hostAndPort: string,
-    response: IsMasterResponse,
     props: ServerDescription,
   ) {
     if (!this.#serverDescriptions.has(hostAndPort)) {
@@ -392,8 +393,8 @@ export class Topology {
       )
     ) {
       this.#type = "ReplicaSetNoPrimary";
-      if (response.primary) {
-        const possiblePrimary = this.#serverDescriptions.get(response.primary);
+      if (props.primary) {
+        const possiblePrimary = this.#serverDescriptions.get(props.primary);
         if (possiblePrimary?.type === "Unknown") {
           possiblePrimary.type = "PossiblePrimary";
         }
@@ -403,7 +404,6 @@ export class Topology {
 
   updateRSWithoutPrimary(
     hostAndPort: string,
-    response: IsMasterResponse,
     props: ServerDescription,
   ) {
     if (!this.#serverDescriptions.has(hostAndPort)) {
@@ -438,8 +438,8 @@ export class Topology {
       )
     ) {
       this.#type = "ReplicaSetNoPrimary";
-      if (response.primary) {
-        const possiblePrimary = this.#serverDescriptions.get(response.primary);
+      if (props.primary) {
+        const possiblePrimary = this.#serverDescriptions.get(props.primary);
         if (possiblePrimary?.type === "Unknown") {
           possiblePrimary.type = "PossiblePrimary";
         }
