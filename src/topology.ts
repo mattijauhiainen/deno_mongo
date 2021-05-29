@@ -155,10 +155,10 @@ type TopologyOptions = {
 export class Topology {
   #minWireVersion = 2; // TODO: What should be the supported range?
   #maxWireVersion = 9; // TODO: What should be the supported range?
-
   #seeds: string[];
   #serverDescriptions: Map<string, ServerDescription> = new Map();
   #type: TopologyType = "Unknown";
+
   #setName: string | null = null;
   #maxSetVersion: number | null = null;
   #maxElectionId: ElectionId | null = null;
@@ -205,10 +205,7 @@ export class Topology {
 
     if (response.ok !== 1) {
       this.setDefaultServerDescription(hostAndPort);
-      if (
-        this.#type === "ReplicaSetNoPrimary" ||
-        this.#type === "ReplicaSetWithPrimary"
-      ) {
+      if (this.#type === "ReplicaSetWithPrimary") {
         this.checkIfHasPrimary();
       }
       return;
@@ -245,7 +242,7 @@ export class Topology {
 
     switch (serverDescription.type) {
       case "Unknown":
-        this.checkIfHasPrimary();
+        if (this.#type === "ReplicaSetWithPrimary") this.checkIfHasPrimary();
         break;
       case "Standalone":
         if (this.#type === "Unknown") {
@@ -273,7 +270,6 @@ export class Topology {
         ) {
           this.deleteServerDescription(hostAndPort);
         }
-
         break;
       case "RSPrimary":
         if (
