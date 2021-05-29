@@ -211,5 +211,8 @@ function parseNormalUrl(url: string): ConnectOptions {
   if (data.search.replicaSet) {
     connectOptions.replicaSet = data.search.replicaSet;
   }
+  if (data.search.directConnection) {
+    connectOptions.directConnection = data.search.directConnection === "true";
+  }
   return connectOptions;
 }

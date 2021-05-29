@@ -147,6 +147,11 @@ interface ElectionId {
   $oid: string;
 }
 
+type TopologyOptions = {
+  replicaSet?: string;
+  directConnection?: boolean;
+};
+
 export class Topology {
   #minWireVersion = 2; // TODO: What should be the supported range?
   #maxWireVersion = 9; // TODO: What should be the supported range?
@@ -161,7 +166,7 @@ export class Topology {
 
   constructor(
     initialServerDescriptions: { host: string; port: number }[],
-    options: Partial<{ replicaSet?: string }>,
+    options: TopologyOptions,
   ) {
     this.#seeds = initialServerDescriptions.map(({ host, port }) =>
       `${host}:${port}`
@@ -170,7 +175,10 @@ export class Topology {
       const key = `${host}:${port}`;
       this.setDefaultServerDescription(key);
     });
-    if (options.replicaSet) {
+    if (options.directConnection === true) {
+      this.#setName = options.replicaSet || null;
+      this.#type = "Single";
+    } else if (options.replicaSet) {
       this.#setName = options.replicaSet;
       this.#type = "ReplicaSetNoPrimary";
     }
@@ -206,7 +214,7 @@ export class Topology {
       return;
     }
 
-    const props: ServerDescription = {
+    const serverDescription: ServerDescription = {
       type: typeFromResponse(response),
       logicalSessionTimeoutMinutes: response.logicalSessionTimeoutMinutes ??
         null,
@@ -226,16 +234,16 @@ export class Topology {
     if (!this.#serverDescriptions.has(hostAndPort)) return;
     if (
       topologyVersionIsStale(
-        props.topologyVersion,
+        serverDescription.topologyVersion,
         this.#serverDescriptions.get(hostAndPort)?.topologyVersion,
       )
     ) {
       return;
     }
 
-    this.#serverDescriptions.set(hostAndPort, props);
+    this.#serverDescriptions.set(hostAndPort, serverDescription);
 
-    switch (props.type) {
+    switch (serverDescription.type) {
       case "Unknown":
         this.checkIfHasPrimary();
         break;
@@ -273,9 +281,16 @@ export class Topology {
           this.#type === "ReplicaSetWithPrimary"
         ) {
           this.#type = "ReplicaSetWithPrimary";
-          this.updateRSFromPrimary(hostAndPort, props);
+          this.updateRSFromPrimary(hostAndPort, serverDescription);
         } else if (this.#type === "Sharded") {
           this.deleteServerDescription(hostAndPort);
+        } else if (this.#type === "Single") {
+          if (this.#setName && this.#setName !== serverDescription.setName) {
+            serverDescription.type = "Unknown";
+          }
+          for (const key of this.#serverDescriptions.keys()) {
+            if (key !== hostAndPort) this.#serverDescriptions.delete(key);
+          }
         }
         break;
       case "RSSecondary":
@@ -285,11 +300,15 @@ export class Topology {
           this.#type === "ReplicaSetNoPrimary" || this.#type === "Unknown"
         ) {
           this.#type = "ReplicaSetNoPrimary";
-          this.updateRSWithoutPrimary(hostAndPort, props);
+          this.updateRSWithoutPrimary(hostAndPort, serverDescription);
         } else if (this.#type === "ReplicaSetWithPrimary") {
-          this.updateRSWithPrimaryFromMember(hostAndPort, props);
+          this.updateRSWithPrimaryFromMember(hostAndPort, serverDescription);
         } else if (this.#type === "Sharded") {
           this.deleteServerDescription(hostAndPort);
+        } else if (this.#type === "Single") {
+          for (const key of this.#serverDescriptions.keys()) {
+            if (key !== hostAndPort) this.#serverDescriptions.delete(key);
+          }
         }
         break;
       case "RSGhost":
@@ -309,39 +328,39 @@ export class Topology {
 
   private updateRSFromPrimary(
     hostAndPort: string,
-    props: ServerDescription,
+    serverDescription: ServerDescription,
   ) {
     if (this.#setName === null) {
-      this.#setName = props.setName!;
-    } else if (this.#setName !== props.setName) {
+      this.#setName = serverDescription.setName!;
+    } else if (this.#setName !== serverDescription.setName) {
       this.deleteServerDescription(hostAndPort);
       return;
     }
 
-    if (props.setVersion && props.electionId) {
+    if (serverDescription.setVersion && serverDescription.electionId) {
       if (
         this.#maxElectionId &&
         this.#maxSetVersion &&
-        (this.#maxSetVersion > props.setVersion ||
-          (this.#maxSetVersion === props.setVersion &&
+        (this.#maxSetVersion > serverDescription.setVersion ||
+          (this.#maxSetVersion === serverDescription.setVersion &&
             BigInt(this.#maxElectionId.$oid) >
-              BigInt(props.electionId.$oid)))
+              BigInt(serverDescription.electionId.$oid)))
       ) {
         this.#serverDescriptions.set(hostAndPort, unknownDefault());
         this.checkIfHasPrimary();
         return;
       }
 
-      this.#maxElectionId = props.electionId;
+      this.#maxElectionId = serverDescription.electionId;
     }
     if (
-      props.setVersion &&
+      serverDescription.setVersion &&
       (
         this.#maxSetVersion === null ||
-        props.setVersion > this.#maxSetVersion
+        serverDescription.setVersion > this.#maxSetVersion
       )
     ) {
-      this.#maxSetVersion = props.setVersion;
+      this.#maxSetVersion = serverDescription.setVersion;
     }
 
     for (const peerHostAndPort of this.#serverDescriptions.keys()) {
@@ -355,9 +374,9 @@ export class Topology {
     }
 
     const peers = [
-      ...props.hosts,
-      ...props.arbiters,
-      ...props.passives,
+      ...serverDescription.hosts,
+      ...serverDescription.arbiters,
+      ...serverDescription.passives,
     ];
 
     peers
@@ -380,9 +399,9 @@ export class Topology {
 
   private updateRSWithPrimaryFromMember(
     hostAndPort: string,
-    props: ServerDescription,
+    serverDescription: ServerDescription,
   ) {
-    if (this.#setName !== props.setName) {
+    if (this.#setName !== serverDescription.setName) {
       this.#serverDescriptions.delete(hostAndPort);
       this.checkIfHasPrimary();
       return;
@@ -390,7 +409,7 @@ export class Topology {
 
     // TODO: Is this correct? Specs often omit "me", is it guaranteed
     // to be there?
-    if (props.me && hostAndPort !== props.me) {
+    if (serverDescription.me && hostAndPort !== serverDescription.me) {
       this.#serverDescriptions.delete(hostAndPort);
       this.checkIfHasPrimary();
       return;
@@ -398,8 +417,10 @@ export class Topology {
 
     if (!this.getPrimary()) {
       this.#type = "ReplicaSetNoPrimary";
-      if (props.primary) {
-        const possiblePrimary = this.#serverDescriptions.get(props.primary);
+      if (serverDescription.primary) {
+        const possiblePrimary = this.#serverDescriptions.get(
+          serverDescription.primary,
+        );
         if (possiblePrimary?.type === "Unknown") {
           possiblePrimary.type = "PossiblePrimary";
         }
@@ -409,19 +430,19 @@ export class Topology {
 
   private updateRSWithoutPrimary(
     hostAndPort: string,
-    props: ServerDescription,
+    serverDescription: ServerDescription,
   ) {
     if (!this.#setName) {
-      this.#setName = props.setName;
-    } else if (this.#setName !== props.setName) {
+      this.#setName = serverDescription.setName;
+    } else if (this.#setName !== serverDescription.setName) {
       this.#serverDescriptions.delete(hostAndPort);
       return;
     }
 
     const peers = [
-      ...props.hosts,
-      ...props.arbiters,
-      ...props.passives,
+      ...serverDescription.hosts,
+      ...serverDescription.arbiters,
+      ...serverDescription.passives,
     ];
 
     peers
@@ -434,8 +455,10 @@ export class Topology {
 
     if (!this.getPrimary()) {
       this.#type = "ReplicaSetNoPrimary";
-      if (props.primary) {
-        const possiblePrimary = this.#serverDescriptions.get(props.primary);
+      if (serverDescription.primary) {
+        const possiblePrimary = this.#serverDescriptions.get(
+          serverDescription.primary,
+        );
         if (possiblePrimary?.type === "Unknown") {
           possiblePrimary.type = "PossiblePrimary";
         }
@@ -444,7 +467,7 @@ export class Topology {
 
     // TODO: Is this right? Atleast RSOther doesn't have "me" prop
     // but it needs to be kept in set
-    if (props.me && hostAndPort !== props.me) {
+    if (serverDescription.me && hostAndPort !== serverDescription.me) {
       this.#serverDescriptions.delete(hostAndPort);
       return;
     }
