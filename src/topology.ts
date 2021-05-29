@@ -277,7 +277,7 @@ export class Topology {
     }
   }
 
-  updateRSFromPrimary(
+  private updateRSFromPrimary(
     hostAndPort: string,
     props: ServerDescription,
   ) {
@@ -349,7 +349,7 @@ export class Topology {
     this.checkIfHasPrimary();
   }
 
-  updateRSWithPrimaryFromMember(
+  private updateRSWithPrimaryFromMember(
     hostAndPort: string,
     props: ServerDescription,
   ) {
@@ -367,12 +367,7 @@ export class Topology {
       return;
     }
 
-    // TODO: Add helper
-    if (
-      !Array.from(this.#serverDescriptions.values()).some((desc) =>
-        desc.type === "RSPrimary"
-      )
-    ) {
+    if (!this.getPrimary()) {
       this.#type = "ReplicaSetNoPrimary";
       if (props.primary) {
         const possiblePrimary = this.#serverDescriptions.get(props.primary);
@@ -383,7 +378,7 @@ export class Topology {
     }
   }
 
-  updateRSWithoutPrimary(
+  private updateRSWithoutPrimary(
     hostAndPort: string,
     props: ServerDescription,
   ) {
@@ -408,11 +403,7 @@ export class Topology {
         this.setDefaultServerDescription(peerHostAndPort)
       );
 
-    if (
-      !Array.from(this.#serverDescriptions.values()).some((desc) =>
-        desc.type === "RSPrimary"
-      )
-    ) {
+    if (!this.getPrimary()) {
       this.#type = "ReplicaSetNoPrimary";
       if (props.primary) {
         const possiblePrimary = this.#serverDescriptions.get(props.primary);
@@ -430,7 +421,7 @@ export class Topology {
     }
   }
 
-  checkIfHasPrimary() {
+  private checkIfHasPrimary() {
     // const rsTypes: TopologyType[] = [
     //   "ReplicaSetWithPrimary",
     //   "ReplicaSetNoPrimary",
@@ -470,6 +461,12 @@ export class Topology {
     } else {
       this.#logicalSessionTimeoutMinutes = Math.min(...timeouts);
     }
+  }
+
+  private getPrimary() {
+    return Array.from(this.#serverDescriptions.values()).find((desc) =>
+      desc.type === "RSPrimary"
+    );
   }
 
   isCompatible() {
