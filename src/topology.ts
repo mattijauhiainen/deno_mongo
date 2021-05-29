@@ -496,26 +496,15 @@ export class Topology {
   }
 
   isCompatible() {
-    const descs = Array.from(this.#serverDescriptions.values());
-    if (
-      descs.some((desc) =>
-        desc.type !== "Unknown" &&
-        desc.type !== "PossiblePrimary" &&
-        desc.maxWireVersion < this.#minWireVersion
+    return Array
+      .from(this.#serverDescriptions.values())
+      .filter((desc) =>
+        desc.type !== "Unknown" && desc.type !== "PossiblePrimary"
       )
-    ) {
-      return false;
-    }
-    if (
-      descs.some((desc) =>
-        desc.type !== "Unknown" &&
-        desc.type !== "PossiblePrimary" &&
-        desc.minWireVersion > this.#maxWireVersion
-      )
-    ) {
-      return false;
-    }
-    return true;
+      .every((desc) => {
+        return desc.maxWireVersion >= this.#minWireVersion &&
+          desc.minWireVersion <= this.#maxWireVersion;
+      });
   }
 
   describe() {
