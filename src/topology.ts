@@ -197,7 +197,12 @@ export class Topology {
 
     if (response.ok !== 1) {
       this.setDefaultServerDescription(hostAndPort);
-      this.checkIfHasPrimary();
+      if (
+        this.#type === "ReplicaSetNoPrimary" ||
+        this.#type === "ReplicaSetWithPrimary"
+      ) {
+        this.checkIfHasPrimary();
+      }
       return;
     }
 

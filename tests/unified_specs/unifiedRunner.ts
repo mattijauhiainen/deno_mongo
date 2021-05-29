@@ -107,7 +107,20 @@ async function runSpec() {
     ],
   );
 
-  const shardedSamples = getSpecs(`${specDir}/sharded`);
+  const shardedSamples = getSpecs(
+    `${specDir}/sharded`,
+    [
+      /Parse logicalSessionTimeoutMinutes from mongoses/,
+      /Non-Mongos server in sharded cluster/,
+      /Multiple mongoses with large minWireVersion/,
+      /Discover single mongos/,
+      /Normalize URI case/,
+      /Multiple mongoses with default maxWireVersion of 0/,
+      /Multiple mongoses/,
+      /Mongos disconnect/,
+      /Multiple mongoses with large maxWireVersion/,
+    ],
+  );
 
   const samplesToRun = [
     ...rsSamples,
