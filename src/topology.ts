@@ -29,9 +29,10 @@ function normaliseResponse(response: IsMasterResponse) {
 }
 
 function topologyVersionIsStale(
-  newVersion: TopologyVersion,
+  newVersion?: TopologyVersion | null,
   oldVersion?: TopologyVersion | null,
 ) {
+  if (!newVersion) return false;
   if (!oldVersion) return false;
   if (newVersion.processId.$oid !== oldVersion.processId.$oid) {
     return false;
@@ -167,7 +168,7 @@ export class Topology {
     );
     initialServerDescriptions.forEach(({ host, port }) => {
       const key = `${host}:${port}`;
-      this.addInitialServerDescription(key);
+      this.setDefaultServerDescription(key);
     });
     if (options.replicaSet) {
       this.#setName = options.replicaSet;
@@ -175,7 +176,7 @@ export class Topology {
     }
   }
 
-  private addInitialServerDescription(hostAndPort: string) {
+  private setDefaultServerDescription(hostAndPort: string) {
     hostAndPort = hostAndPort.toLowerCase();
     this.#serverDescriptions.set(hostAndPort, unknownDefault());
   }
@@ -188,7 +189,7 @@ export class Topology {
     response = normaliseResponse(response);
 
     if (response.ok !== 1) {
-      this.addInitialServerDescription(hostAndPort);
+      this.setDefaultServerDescription(hostAndPort);
       this.checkIfHasPrimary();
       return;
     }
@@ -209,17 +210,18 @@ export class Topology {
       me: response.me ?? null,
       primary: response.primary ?? null,
     };
-    if (props.topologyVersion) {
-      if (
-        topologyVersionIsStale(
-          props.topologyVersion,
-          this.#serverDescriptions.get(hostAndPort)?.topologyVersion,
-        )
-      ) {
-        console.warn(`Received stale response...`);
-        return;
-      }
+
+    if (!this.#serverDescriptions.has(hostAndPort)) return;
+    if (
+      topologyVersionIsStale(
+        props.topologyVersion,
+        this.#serverDescriptions.get(hostAndPort)?.topologyVersion,
+      )
+    ) {
+      return;
     }
+
+    this.#serverDescriptions.set(hostAndPort, props);
 
     switch (props.type) {
       case "RSPrimary":
@@ -232,7 +234,9 @@ export class Topology {
         if (this.#type === "ReplicaSetWithPrimary") {
           this.updateRSWithPrimaryFromMember(hostAndPort, props);
         }
-        if (this.#type === "ReplicaSetNoPrimary" || this.#type === "Unknown") {
+        if (
+          this.#type === "ReplicaSetNoPrimary" || this.#type === "Unknown"
+        ) {
           this.updateRSWithoutPrimary(hostAndPort, props);
         }
         this.updateLogicalSessionTimeoutMinutes();
@@ -277,13 +281,6 @@ export class Topology {
     hostAndPort: string,
     props: ServerDescription,
   ) {
-    if (!this.#serverDescriptions.has(hostAndPort)) {
-      console.warn(
-        `Ignoring response for server which is no longer monitored (${hostAndPort})`,
-      );
-      return;
-    }
-
     if (this.#setName === null) {
       this.#setName = props.setName!;
     } else if (this.#setName !== props.setName) {
@@ -328,16 +325,6 @@ export class Topology {
       }
     }
 
-    // Only add if the 'me' matches
-    if (
-      !props.me ||
-      hostAndPort === props.me ||
-      // TODO: This propbably isn't right?
-      !props.hosts?.includes(props.me)
-    ) {
-      this.#serverDescriptions.set(hostAndPort, props);
-    }
-
     const peers = [
       ...props.hosts,
       ...props.arbiters,
@@ -345,11 +332,14 @@ export class Topology {
     ];
 
     peers
-      .filter((hostAndPort) => !this.#serverDescriptions.has(hostAndPort))
-      .forEach((hostAndPort) => this.addInitialServerDescription(hostAndPort));
+      .filter((peerHostAndPort) =>
+        !this.#serverDescriptions.has(peerHostAndPort)
+      )
+      .forEach((peerHostAndPort) =>
+        this.setDefaultServerDescription(peerHostAndPort)
+      );
 
-    // Do this after we've added the primary. If the primary is not on it's
-    // own hosts list we need to remove it
+    // If the primary is not on it's own hosts list we need to remove it
     Array.from(this.#serverDescriptions.keys()).forEach((hostAndPort) => {
       if (!peers.includes(hostAndPort)) {
         this.#serverDescriptions.delete(hostAndPort);
@@ -430,7 +420,7 @@ export class Topology {
 
     peers
       .filter((hostAndPort) => !this.#serverDescriptions.has(hostAndPort))
-      .forEach((hostAndPort) => this.addInitialServerDescription(hostAndPort));
+      .forEach((hostAndPort) => this.setDefaultServerDescription(hostAndPort));
 
     if (
       !Array.from(this.#serverDescriptions.values()).some((desc) =>
