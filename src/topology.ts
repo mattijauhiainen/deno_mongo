@@ -183,6 +183,11 @@ export class Topology {
     );
   }
 
+  private deleteServerDescription(hostAndPort: string) {
+    this.#serverDescriptions.delete(hostAndPort);
+    if (this.#type === "ReplicaSetWithPrimary") this.checkIfHasPrimary();
+  }
+
   updateServerDescription(
     hostAndPort: string,
     response: IsMasterResponse,
@@ -226,38 +231,8 @@ export class Topology {
     this.#serverDescriptions.set(hostAndPort, props);
 
     switch (props.type) {
-      case "RSPrimary":
-        this.updateRSFromPrimary(hostAndPort, props);
-        break;
-      case "RSArbiter":
-      case "RSOther":
-      case "RSSecondary":
-        if (this.#type === "ReplicaSetWithPrimary") {
-          this.updateRSWithPrimaryFromMember(hostAndPort, props);
-        }
-        if (
-          this.#type === "ReplicaSetNoPrimary" || this.#type === "Unknown"
-        ) {
-          this.updateRSWithoutPrimary(hostAndPort, props);
-        }
-        break;
-      case "Mongos":
-        if (this.#type === "Unknown") {
-          this.#type = "Sharded";
-        } else if (this.#type === "Sharded") {
-          // no-op
-        } else {
-          if (this.#type === "ReplicaSetWithPrimary") {
-            this.#serverDescriptions.delete(hostAndPort);
-            this.checkIfHasPrimary();
-          } else if (this.#type === "ReplicaSetNoPrimary") {
-            this.#serverDescriptions.delete(hostAndPort);
-          }
-        }
-        break;
-      case "RSGhost":
-        this.#serverDescriptions.set(hostAndPort, props);
-        if (this.#type === "ReplicaSetWithPrimary") this.checkIfHasPrimary();
+      case "Unknown":
+        this.checkIfHasPrimary();
         break;
       case "Standalone":
         if (this.#type === "Unknown") {
@@ -266,16 +241,58 @@ export class Topology {
           } else {
             this.#serverDescriptions.delete(hostAndPort);
           }
-        } else if (this.#type === "ReplicaSetWithPrimary") {
-          this.#serverDescriptions.delete(hostAndPort);
-          this.checkIfHasPrimary();
+        } else if (this.#type === "Single") {
+          for (const key of this.#serverDescriptions.keys()) {
+            if (key !== hostAndPort) this.#serverDescriptions.delete(key);
+          }
         } else {
-          this.#serverDescriptions.delete(hostAndPort);
+          this.deleteServerDescription(hostAndPort);
         }
         break;
-      case "Unknown":
-        this.#serverDescriptions.delete(hostAndPort);
-        this.checkIfHasPrimary();
+      case "Mongos":
+        if (this.#type === "Unknown") {
+          this.#type = "Sharded";
+        } else if (this.#type === "Sharded") {
+          // no-op
+        } else if (
+          this.#type === "ReplicaSetWithPrimary" ||
+          this.#type === "ReplicaSetNoPrimary"
+        ) {
+          this.deleteServerDescription(hostAndPort);
+        }
+
+        break;
+      case "RSPrimary":
+        if (
+          this.#type === "Unknown" || this.#type === "ReplicaSetNoPrimary" ||
+          this.#type === "ReplicaSetWithPrimary"
+        ) {
+          this.#type = "ReplicaSetWithPrimary";
+          this.updateRSFromPrimary(hostAndPort, props);
+        } else if (this.#type === "Sharded") {
+          this.deleteServerDescription(hostAndPort);
+        }
+        break;
+      case "RSSecondary":
+      case "RSArbiter":
+      case "RSOther":
+        if (
+          this.#type === "ReplicaSetNoPrimary" || this.#type === "Unknown"
+        ) {
+          this.#type = "ReplicaSetNoPrimary";
+          this.updateRSWithoutPrimary(hostAndPort, props);
+        } else if (this.#type === "ReplicaSetWithPrimary") {
+          this.updateRSWithPrimaryFromMember(hostAndPort, props);
+        } else if (this.#type === "Sharded") {
+          this.deleteServerDescription(hostAndPort);
+        }
+        break;
+      case "RSGhost":
+        if (this.#type === "ReplicaSetWithPrimary") {
+          this.checkIfHasPrimary();
+        } else if (this.#type === "Sharded") {
+          this.deleteServerDescription(hostAndPort);
+        }
         break;
       default:
         throw new Error(
@@ -292,8 +309,7 @@ export class Topology {
     if (this.#setName === null) {
       this.#setName = props.setName!;
     } else if (this.#setName !== props.setName) {
-      this.#serverDescriptions.delete(hostAndPort);
-      this.checkIfHasPrimary();
+      this.deleteServerDescription(hostAndPort);
       return;
     }
 
@@ -430,15 +446,6 @@ export class Topology {
   }
 
   private checkIfHasPrimary() {
-    // const rsTypes: TopologyType[] = [
-    //   "ReplicaSetWithPrimary",
-    //   "ReplicaSetNoPrimary",
-    // ];
-    // if (!rsTypes.includes(this.#type)) {
-    //   throw new Error(
-    //     "Tried to update replica set primary status for non-replicaset topology",
-    //   );
-    // }
     for (const description of this.#serverDescriptions.values()) {
       if (description.type === "RSPrimary") {
         this.#type = "ReplicaSetWithPrimary";
