@@ -12,6 +12,7 @@ interface TestSample {
 }
 
 interface Phase {
+  description?: string;
   responses: [string, IsMasterResponse][];
   outcome: Record<string, unknown>;
 }
@@ -216,14 +217,14 @@ async function runSpec() {
     ...rsSamples,
     ...shardedSamples,
     ...singleSamples,
-    ...errorsSamples,
+    // ...errorsSamples,
   ];
   for (const testSample of samplesToRun) {
     console.log(`${testSample.description}...`);
     const options = await parse(testSample.uri);
     const topology = new Topology(options.servers, options);
     testSample.phases.forEach((phase, phaseIndex) => {
-      console.log(`\tPhase ${phaseIndex + 1}`);
+      console.log(phase.description ?? `\tPhase ${phaseIndex + 1}`);
       phase.responses.forEach((response) => {
         topology.updateServerDescription(
           response[0] as string,
