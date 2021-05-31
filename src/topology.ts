@@ -1,4 +1,6 @@
-function unknownDefault(): ServerDescription {
+function unknownDefault(
+  props: Partial<ServerDescription> = {},
+): ServerDescription {
   return {
     type: "Unknown",
     electionId: null,
@@ -13,6 +15,7 @@ function unknownDefault(): ServerDescription {
     logicalSessionTimeoutMinutes: null,
     me: null,
     primary: null,
+    ...props,
   };
 }
 
@@ -26,6 +29,21 @@ function normaliseResponse(response: IsMasterResponse) {
     setName: response.setName?.toLowerCase(),
     me: response.me?.toLowerCase(),
   };
+}
+
+function compareTopologyVersion(
+  oldTopologyVersion?: TopologyVersion | null,
+  newTopologyVersion?: TopologyVersion | null,
+) {
+  if (!oldTopologyVersion || !newTopologyVersion) return -1;
+  if (oldTopologyVersion.processId.$oid !== newTopologyVersion.processId.$oid) {
+    return -1;
+  }
+  const oldCounter = BigInt(oldTopologyVersion.counter.$numberLong);
+  const newCounter = BigInt(newTopologyVersion.counter.$numberLong);
+  if (oldCounter === newCounter) return 0;
+  if (oldCounter < newCounter) return -1;
+  return 1;
 }
 
 function topologyVersionIsStale(
@@ -94,7 +112,8 @@ export type TopologyType =
   | "ReplicaSetNoPrimary"
   | "ReplicaSetWithPrimary"
   | "Sharded"
-  | "Unknown";
+  | "Unknown"
+  | "LoadBalanced"; // TODO
 
 export interface IsMasterResponse {
   ok: number;
@@ -118,6 +137,16 @@ export interface IsMasterResponse {
   electionId?: ElectionId;
   msg?: string;
   logicalSessionTimeoutMinutes?: number | null;
+}
+
+export interface ApplicationError {
+  address: string;
+  maxWireVersion: number;
+  type: "command" | "network" | "timeout";
+
+  when?: "afterHandshakeCompletes";
+  generation?: number;
+  response?: Record<string, unknown>;
 }
 
 interface ServerDescription {
@@ -320,6 +349,96 @@ export class Topology {
         );
     }
     this.updateLogicalSessionTimeoutMinutes();
+  }
+
+  handleError(
+    error: ApplicationError,
+  ) {
+    function isNotMaster(message?: string, code?: number) {
+      const notMasterCodes = [10107, 13435, 10058];
+      if (code) return notMasterCodes.includes(code);
+      if (isRecovering(message)) return false;
+
+      return (message || "").match(
+        /not master/,
+      );
+    }
+    function isRecovering(message?: string, code?: number) {
+      const recoveringCodes = [11600, 11602, 13436, 189, 91];
+      if (code) return recoveringCodes.includes(code);
+
+      return (message || "").match(
+        /not master or secondary|node is recovering/,
+      );
+    }
+    function isStateChangedError(error: ApplicationError) {
+      return isRecovering(
+        error?.response?.errmsg as string,
+        error?.response?.code as number,
+      ) ||
+        isNotMaster(
+          error?.response?.errmsg as string,
+          error?.response?.code as number,
+        );
+    }
+    const self = this;
+    function isStaleError(error: ApplicationError) {
+      /*
+    currentServer = topologyDescription.servers[server.address]
+    currentGeneration = currentServer.pool.generation
+    generation = get connection generation from error
+    if generation < currentGeneration:
+        # Stale generation number.
+        return True
+
+    # True if the current error's topologyVersion is greater than the server's
+    # We use >= instead of > because any state change should result in a new topologyVersion
+    return compareTopologyVersion(currentTopologyVersion, error.commandResponse.get("topologyVersion")) >= 0
+    */
+
+      const currentServer = self.#serverDescriptions.get(error.address);
+      return compareTopologyVersion(
+        currentServer?.topologyVersion,
+        error.response?.topologyVersion as TopologyVersion,
+      ) >= 0;
+    }
+
+    if (isStaleError(error)) return;
+
+    if (isStateChangedError(error)) {
+      if (this.#type !== "LoadBalanced") {
+        this.#serverDescriptions.set(
+          error.address,
+          unknownDefault({
+            topologyVersion:
+              error.response?.topologyVersion as TopologyVersion ?? null,
+          }),
+        );
+        if (this.#type === "ReplicaSetWithPrimary") this.checkIfHasPrimary();
+      }
+    } else if (
+      error.type === "network" ||
+      (error.when !== "afterHandshakeCompletes" &&
+        (error.type === "timeout" || /* isAuthError */ false))
+    ) {
+      if (this.#type !== "LoadBalanced") {
+        this.#serverDescriptions.set(
+          error.address,
+          unknownDefault({
+            topologyVersion:
+              error.response?.topologyVersion as TopologyVersion ?? null,
+          }),
+        );
+        if (this.#type === "ReplicaSetWithPrimary") this.checkIfHasPrimary();
+      } else {
+        // TODO
+      }
+    }
+
+    // def isStateChangeError(error):
+    // message = error.errmsg
+    // code = error.code
+    // return isRecovering(message, code) or isNotMaster(message, code)
   }
 
   private updateRSFromPrimary(

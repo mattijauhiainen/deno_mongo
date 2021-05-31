@@ -3,7 +3,11 @@ import { parse } from "../../src/utils/uri.ts";
 // TODO: Fix import
 import { parse as parseYaml } from "https://deno.land/std/encoding/yaml.ts";
 
-import { IsMasterResponse, Topology } from "../../src/Topology.ts";
+import {
+  ApplicationError,
+  IsMasterResponse,
+  Topology,
+} from "../../src/Topology.ts";
 
 interface TestSample {
   description: string;
@@ -14,6 +18,7 @@ interface TestSample {
 interface Phase {
   description?: string;
   responses: [string, IsMasterResponse][];
+  applicationErrors?: ApplicationError[];
   outcome: Record<string, unknown>;
 }
 
@@ -133,79 +138,79 @@ async function runSpec() {
       /Non-stale network error/,
       /Post-4.2 ShutdownInProgress error/,
       /Pre-4.2 NotMasterNoSlaveOk error/,
-      /Stale generation InterruptedAtShutdown error afterHandshakeCompletes/,
-      /Stale generation network error afterHandshakeCompletes/,
+      // /Stale generation InterruptedAtShutdown error afterHandshakeCompletes/,
+      // /Stale generation network error afterHandshakeCompletes/,
       /Post-4.2 InterruptedDueToReplStateChange error/,
       /Non-stale topologyVersion missing NotMasterNoSlaveOk error/,
-      /Stale generation PrimarySteppedDown error/,
-      /Stale generation ShutdownInProgress error/,
+      // /Stale generation PrimarySteppedDown error/,
+      // /Stale generation ShutdownInProgress error/,
       /Pre-4.2 InterruptedAtShutdown error/,
-      /Stale generation InterruptedDueToReplStateChange error beforeHandshakeCompletes/,
+      // /Stale generation InterruptedDueToReplStateChange error beforeHandshakeCompletes/,
       /Post-4.2 PrimarySteppedDown error/,
       /writeErrors field is ignored/,
       /Network timeouts before and after the handshake completes/,
-      /Stale generation ShutdownInProgress error afterHandshakeCompletes/,
-      /Stale generation InterruptedDueToReplStateChange error afterHandshakeCompletes/,
-      /Stale generation NotMaster error beforeHandshakeCompletes/,
-      /Stale generation PrimarySteppedDown error afterHandshakeCompletes/,
+      // /Stale generation ShutdownInProgress error afterHandshakeCompletes/,
+      // /Stale generation InterruptedDueToReplStateChange error afterHandshakeCompletes/,
+      // /Stale generation NotMaster error beforeHandshakeCompletes/,
+      // /Stale generation PrimarySteppedDown error afterHandshakeCompletes/,
       /Post-4.2 NotMaster error/,
       /Non-stale topologyVersion missing InterruptedDueToReplStateChange error/,
       /Non-stale topologyVersion greater NotMasterNoSlaveOk error/,
-      /Stale generation timeout error beforeHandshakeCompletes/,
-      /Stale generation ShutdownInProgress error beforeHandshakeCompletes/,
-      /Stale generation LegacyNotPrimary error beforeHandshakeCompletes/,
+      // /Stale generation timeout error beforeHandshakeCompletes/,
+      // /Stale generation ShutdownInProgress error beforeHandshakeCompletes/,
+      // /Stale generation LegacyNotPrimary error beforeHandshakeCompletes/,
       /Post-4.2 NotMasterOrSecondary error/,
-      /Stale generation PrimarySteppedDown error beforeHandshakeCompletes/,
+      // /Stale generation PrimarySteppedDown error beforeHandshakeCompletes/,
       /Stale topologyVersion NotMasterNoSlaveOk error/,
       /Non-stale topologyVersion proccessId changed InterruptedAtShutdown error/,
-      /Stale generation LegacyNotPrimary error afterHandshakeCompletes/,
+      // /Stale generation LegacyNotPrimary error afterHandshakeCompletes/,
       /Non-stale topologyVersion missing InterruptedAtShutdown error/,
       /Non-stale topologyVersion proccessId changed NotMasterOrSecondary error/,
       /Non-stale topologyVersion greater NotMaster error/,
       /Non-stale topologyVersion proccessId changed NotMasterNoSlaveOk error/,
       /Non-stale topologyVersion greater LegacyNotPrimary error/,
-      /Stale generation NotMasterOrSecondary error beforeHandshakeCompletes/,
+      // /Stale generation NotMasterOrSecondary error beforeHandshakeCompletes/,
       /Pre-4.2 InterruptedDueToReplStateChange error/,
       /Non-stale topologyVersion proccessId changed LegacyNotPrimary error/,
       /Non-stale network timeout error/,
       /Non-stale topologyVersion proccessId changed NotMaster error/,
       /Stale topologyVersion NotMasterOrSecondary error/,
-      /Stale generation NotMasterOrSecondary error/,
+      // /Stale generation NotMasterOrSecondary error/,
       /Non-stale topologyVersion proccessId changed InterruptedDueToReplStateChange error/,
       /Non-stale topologyVersion greater InterruptedDueToReplStateChange error/,
-      /Stale generation NotMasterNoSlaveOk error afterHandshakeCompletes/,
+      // /Stale generation NotMasterNoSlaveOk error afterHandshakeCompletes/,
       /Stale topologyVersion InterruptedAtShutdown error/,
       /Pre-4.2 LegacyNotPrimary error/,
       /Pre-4.2 PrimarySteppedDown error/,
       /Post-4.2 LegacyNotPrimary error/,
       /Non-stale topologyVersion missing PrimarySteppedDown error/,
-      /Stale generation NotMasterNoSlaveOk error/,
+      // /Stale generation NotMasterNoSlaveOk error/,
       /Non-stale topologyVersion missing ShutdownInProgress error/,
-      /Stale generation network error beforeHandshakeCompletes/,
+      // /Stale generation network error beforeHandshakeCompletes/,
       /Pre-4.2 ShutdownInProgress error/,
       /Post-4.2 NotMasterNoSlaveOk error/,
-      /Stale generation NotMaster error afterHandshakeCompletes/,
+      // /Stale generation NotMaster error afterHandshakeCompletes/,
       /Non-stale topologyVersion missing NotMaster error/,
       /Pre-4.2 NotMasterOrSecondary error/,
       /Non-stale topologyVersion greater InterruptedAtShutdown error/,
       /Non-stale topologyVersion proccessId changed PrimarySteppedDown error/,
-      /Stale generation InterruptedAtShutdown error beforeHandshakeCompletes/,
-      /Stale generation InterruptedDueToReplStateChange error/,
+      // /Stale generation InterruptedAtShutdown error beforeHandshakeCompletes/,
+      // /Stale generation InterruptedDueToReplStateChange error/,
       /Non-stale topologyVersion proccessId changed ShutdownInProgress error/,
-      /Stale generation InterruptedAtShutdown error/,
-      /Stale generation NotMasterOrSecondary error afterHandshakeCompletes/,
+      // /Stale generation InterruptedAtShutdown error/,
+      // /Stale generation NotMasterOrSecondary error afterHandshakeCompletes/,
       /Do not check errmsg when code exists/,
       /Pre-4.2 NotMaster error/,
-      /Stale generation NotMaster error/,
+      // /Stale generation NotMaster error/,
       /Non-stale topologyVersion greater PrimarySteppedDown error/,
       /Stale topologyVersion ShutdownInProgress error/,
       /Stale topologyVersion InterruptedDueToReplStateChange error/,
       /Stale topologyVersion NotMaster error/,
       /Non-stale topologyVersion greater NotMasterOrSecondary error/,
       /Non-stale topologyVersion missing LegacyNotPrimary error/,
-      /Stale generation NotMasterNoSlaveOk error beforeHandshakeCompletes/,
+      // /Stale generation NotMasterNoSlaveOk error beforeHandshakeCompletes/,
       /Stale topologyVersion LegacyNotPrimary error/,
-      /Stale generation timeout error afterHandshakeCompletes/,
+      // /Stale generation timeout error afterHandshakeCompletes/,
       /Stale topologyVersion PrimarySteppedDown error/,
       /Post-4.2 InterruptedAtShutdown error/,
       /Non-stale topologyVersion greater ShutdownInProgress error/,
@@ -217,32 +222,45 @@ async function runSpec() {
     ...rsSamples,
     ...shardedSamples,
     ...singleSamples,
-    // ...errorsSamples,
+    ...errorsSamples,
   ];
   for (const testSample of samplesToRun) {
+    console.log("************ start ************");
     console.log(`${testSample.description}...`);
     const options = await parse(testSample.uri);
     const topology = new Topology(options.servers, options);
     testSample.phases.forEach((phase, phaseIndex) => {
       console.log(phase.description ?? `\tPhase ${phaseIndex + 1}`);
-      phase.responses.forEach((response) => {
-        topology.updateServerDescription(
-          response[0] as string,
-          response[1] as IsMasterResponse,
-        );
-      });
+      if (phase.responses) {
+        for (const response of phase.responses) {
+          topology.updateServerDescription(
+            response[0] as string,
+            response[1] as IsMasterResponse,
+          );
+        }
+      } else if (phase.applicationErrors) {
+        for (const error of phase.applicationErrors) {
+          topology.handleError(error);
+        }
+      }
       try {
-        const pathsToCheck = getPaths(phase.outcome);
+        const pathsToCheck = getPaths(phase.outcome).filter((path) =>
+          !/.*pool.generation$/.test(path)
+        );
+        const expected = phase.outcome;
+        for (const server of Object.values(expected.servers as any)) {
+          delete (server as any).pool;
+        }
         const actual = {};
         pathsToCheck.forEach((path) => pick(topology.describe(), actual, path));
-        assertEquals(actual, phase.outcome);
+        assertEquals(actual, expected);
       } catch (error) {
         console.log(JSON.stringify(testSample, null, 2));
         console.log(JSON.stringify(topology.describe(), null, 2));
         throw error;
       }
     });
-    console.log("ok");
+    console.log("############# ok ##############");
   }
 }
 
