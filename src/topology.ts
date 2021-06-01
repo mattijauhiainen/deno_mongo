@@ -31,6 +31,35 @@ function normaliseResponse(response: IsMasterResponse) {
   };
 }
 
+function isStateChangedError(error: ApplicationError) {
+  return isRecovering(
+    error?.response?.errmsg as string,
+    error?.response?.code as number,
+  ) ||
+    isNotMaster(
+      error?.response?.errmsg as string,
+      error?.response?.code as number,
+    );
+}
+
+function isNotMaster(message?: string, code?: number) {
+  const notMasterCodes = [10107, 13435, 10058];
+  if (code) return notMasterCodes.includes(code);
+  if (isRecovering(message)) return false;
+
+  return (message || "").match(
+    /not master/,
+  );
+}
+function isRecovering(message?: string, code?: number) {
+  const recoveringCodes = [11600, 11602, 13436, 189, 91];
+  if (code) return recoveringCodes.includes(code);
+
+  return (message || "").match(
+    /not master or secondary|node is recovering/,
+  );
+}
+
 function compareTopologyVersion(
   oldTopologyVersion?: TopologyVersion | null,
   newTopologyVersion?: TopologyVersion | null,
@@ -44,24 +73,6 @@ function compareTopologyVersion(
   if (oldCounter === newCounter) return 0;
   if (oldCounter < newCounter) return -1;
   return 1;
-}
-
-function topologyVersionIsStale(
-  newVersion?: TopologyVersion | null,
-  oldVersion?: TopologyVersion | null,
-) {
-  if (!newVersion) return false;
-  if (!oldVersion) return false;
-  if (newVersion.processId.$oid !== oldVersion.processId.$oid) {
-    return false;
-  }
-  if (
-    BigInt(newVersion.counter.$numberLong) >=
-      BigInt(oldVersion.counter.$numberLong)
-  ) {
-    return false;
-  }
-  return true;
 }
 
 function typeFromResponse(response: IsMasterResponse): ServerType {
@@ -259,10 +270,10 @@ export class Topology {
 
     if (!this.#serverDescriptions.has(hostAndPort)) return;
     if (
-      topologyVersionIsStale(
-        serverDescription.topologyVersion,
+      compareTopologyVersion(
         this.#serverDescriptions.get(hostAndPort)?.topologyVersion,
-      )
+        serverDescription.topologyVersion,
+      ) > 0
     ) {
       return;
     }
@@ -354,56 +365,7 @@ export class Topology {
   handleError(
     error: ApplicationError,
   ) {
-    function isNotMaster(message?: string, code?: number) {
-      const notMasterCodes = [10107, 13435, 10058];
-      if (code) return notMasterCodes.includes(code);
-      if (isRecovering(message)) return false;
-
-      return (message || "").match(
-        /not master/,
-      );
-    }
-    function isRecovering(message?: string, code?: number) {
-      const recoveringCodes = [11600, 11602, 13436, 189, 91];
-      if (code) return recoveringCodes.includes(code);
-
-      return (message || "").match(
-        /not master or secondary|node is recovering/,
-      );
-    }
-    function isStateChangedError(error: ApplicationError) {
-      return isRecovering(
-        error?.response?.errmsg as string,
-        error?.response?.code as number,
-      ) ||
-        isNotMaster(
-          error?.response?.errmsg as string,
-          error?.response?.code as number,
-        );
-    }
-    const self = this;
-    function isStaleError(error: ApplicationError) {
-      /*
-    currentServer = topologyDescription.servers[server.address]
-    currentGeneration = currentServer.pool.generation
-    generation = get connection generation from error
-    if generation < currentGeneration:
-        # Stale generation number.
-        return True
-
-    # True if the current error's topologyVersion is greater than the server's
-    # We use >= instead of > because any state change should result in a new topologyVersion
-    return compareTopologyVersion(currentTopologyVersion, error.commandResponse.get("topologyVersion")) >= 0
-    */
-
-      const currentServer = self.#serverDescriptions.get(error.address);
-      return compareTopologyVersion(
-        currentServer?.topologyVersion,
-        error.response?.topologyVersion as TopologyVersion,
-      ) >= 0;
-    }
-
-    if (isStaleError(error)) return;
+    if (this.isStaleError(error)) return;
 
     if (isStateChangedError(error)) {
       if (this.#type !== "LoadBalanced") {
@@ -419,7 +381,7 @@ export class Topology {
     } else if (
       error.type === "network" ||
       (error.when !== "afterHandshakeCompletes" &&
-        (error.type === "timeout" || /* isAuthError */ false))
+        (error.type === "timeout" /* TODO: || isAuthError */))
     ) {
       if (this.#type !== "LoadBalanced") {
         this.#serverDescriptions.set(
@@ -434,11 +396,14 @@ export class Topology {
         // TODO
       }
     }
+  }
 
-    // def isStateChangeError(error):
-    // message = error.errmsg
-    // code = error.code
-    // return isRecovering(message, code) or isNotMaster(message, code)
+  isStaleError(error: ApplicationError) {
+    const currentServer = this.#serverDescriptions.get(error.address);
+    return compareTopologyVersion(
+      currentServer?.topologyVersion,
+      error.response?.topologyVersion as TopologyVersion,
+    ) >= 0;
   }
 
   private updateRSFromPrimary(
