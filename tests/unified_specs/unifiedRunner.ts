@@ -2,6 +2,7 @@ import { assertEquals } from "../test.deps.ts";
 import { parse } from "../../src/utils/uri.ts";
 // TODO: Fix import
 import { parse as parseYaml } from "https://deno.land/std/encoding/yaml.ts";
+import { ObjectId } from "../../src/utils/bson.ts";
 
 import {
   ApplicationError,
@@ -71,7 +72,7 @@ async function runSpec() {
       /New primary with equal electionId/,
       /Primary mismatched me is not removed/,
       /Host list differs from seeds/,
-      /Disconnected from primary/,
+      /Disconnected from primary$/,
       /Discover secondary with directConnection URI option/,
       /Discover RSOther with replicaSet URI option/,
       /Primary becomes a secondary with wrong setName/,
@@ -80,7 +81,7 @@ async function runSpec() {
       /Primary becomes ghost/,
       /Replica set mixed case normalization/,
       /Record max setVersion, even from primary without electionId/,
-      /New primary/,
+      /New primary$/,
       /Primary reports a new member/,
       /Replica set member and an unknown server/,
       /Replica set member with default maxWireVersion of 0/,
@@ -97,7 +98,7 @@ async function runSpec() {
       /Unexpected mongos/,
       /Non replicaSet member responds/,
       /Response from removed server/,
-      /New primary/,
+      /New primary$/,
       /Discover hidden with replicaSet URI option/,
       /Primary with newer topologyVersion/,
       /New primary with greater setVersion/,
@@ -224,6 +225,7 @@ async function runSpec() {
     ...singleSamples,
     ...errorsSamples,
   ];
+
   for (const testSample of samplesToRun) {
     console.log("************ start ************");
     console.log(`${testSample.description}...`);
@@ -235,24 +237,30 @@ async function runSpec() {
         for (const response of phase.responses) {
           topology.updateServerDescription(
             response[0] as string,
-            response[1] as IsMasterResponse,
+            parseObjects(response[1]),
           );
         }
       } else if (phase.applicationErrors) {
         for (const error of phase.applicationErrors) {
+          if (error.response) error.response = parseObjects(error.response);
           topology.handleError(error);
         }
       }
       try {
+        const expected = parseObjects(phase.outcome);
+        if (expected?.maxElectionId?.$oid) {
+          expected.maxElectionId = ObjectId(expected.maxElectionId.$oid);
+        }
+        for (const server of Object.values(expected.servers)) {
+          const s = parseObjects(server);
+          delete s.pool;
+        }
+        const actual = {};
         const pathsToCheck = getPaths(phase.outcome).filter((path) =>
           !/.*pool.generation$/.test(path)
         );
-        const expected = phase.outcome;
-        for (const server of Object.values(expected.servers as any)) {
-          delete (server as any).pool;
-        }
-        const actual = {};
         pathsToCheck.forEach((path) => pick(topology.describe(), actual, path));
+
         assertEquals(actual, expected);
       } catch (error) {
         console.log(JSON.stringify(testSample, null, 2));
@@ -307,6 +315,26 @@ function getPaths(
     }
   });
   return paths;
+}
+
+// TODO: Very naughty
+function parseObjects(
+  object: any,
+): any {
+  if (object?.topologyVersion?.processId.$oid) {
+    object.topologyVersion.processId = ObjectId(
+      object.topologyVersion.processId.$oid,
+    );
+  }
+  if (object?.topologyVersion?.counter?.$numberLong) {
+    object.topologyVersion.counter = Number.parseInt(
+      object.topologyVersion.counter.$numberLong,
+    );
+  }
+  if (object?.electionId?.$oid) {
+    object.electionId = ObjectId(object.electionId.$oid);
+  }
+  return object;
 }
 
 runSpec();

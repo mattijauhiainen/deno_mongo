@@ -1,3 +1,5 @@
+import { ObjectIDType } from "./utils/bson.ts";
+
 function unknownDefault(
   props: Partial<ServerDescription> = {},
 ): ServerDescription {
@@ -65,11 +67,15 @@ function compareTopologyVersion(
   newTopologyVersion?: TopologyVersion | null,
 ) {
   if (!oldTopologyVersion || !newTopologyVersion) return -1;
-  if (oldTopologyVersion.processId.$oid !== newTopologyVersion.processId.$oid) {
+  if (
+    !oldTopologyVersion.processId.equals(newTopologyVersion.processId)
+  ) {
     return -1;
   }
-  const oldCounter = BigInt(oldTopologyVersion.counter.$numberLong);
-  const newCounter = BigInt(newTopologyVersion.counter.$numberLong);
+
+  const oldCounter = oldTopologyVersion.counter;
+  const newCounter = newTopologyVersion.counter;
+
   if (oldCounter === newCounter) return 0;
   if (oldCounter < newCounter) return -1;
   return 1;
@@ -145,7 +151,7 @@ export interface IsMasterResponse {
   me?: string;
   primary?: string;
   setVersion?: number;
-  electionId?: ElectionId;
+  electionId?: ObjectIDType;
   msg?: string;
   logicalSessionTimeoutMinutes?: number | null;
 }
@@ -160,7 +166,7 @@ export interface ApplicationError {
   response?: Record<string, unknown>;
 }
 
-interface ServerDescription {
+export interface ServerDescription {
   type: ServerType;
   minWireVersion: number;
   maxWireVersion: number;
@@ -172,19 +178,15 @@ interface ServerDescription {
   topologyVersion: TopologyVersion | null;
   setName: string | null;
   setVersion: number | null;
-  electionId: ElectionId | null;
+  electionId: ObjectIDType | null;
 
   me: string | null;
   primary: string | null;
 }
 
 interface TopologyVersion {
-  processId: { $oid: string };
-  counter: { $numberLong: string };
-}
-
-interface ElectionId {
-  $oid: string;
+  processId: ObjectIDType;
+  counter: number;
 }
 
 type TopologyOptions = {
@@ -201,7 +203,7 @@ export class Topology {
 
   #setName: string | null = null;
   #maxSetVersion: number | null = null;
-  #maxElectionId: ElectionId | null = null;
+  #maxElectionId: ObjectIDType | null = null;
   #logicalSessionTimeoutMinutes: number | null = null;
 
   constructor(
@@ -423,8 +425,8 @@ export class Topology {
         this.#maxSetVersion &&
         (this.#maxSetVersion > serverDescription.setVersion ||
           (this.#maxSetVersion === serverDescription.setVersion &&
-            BigInt(this.#maxElectionId.$oid) >
-              BigInt(serverDescription.electionId.$oid)))
+            this.#maxElectionId >
+              serverDescription.electionId))
       ) {
         this.#serverDescriptions.set(hostAndPort, unknownDefault());
         this.checkIfHasPrimary();
@@ -615,7 +617,7 @@ export class Topology {
       logicalSessionTimeoutMinutes: number | null;
       compatible: boolean;
       maxSetVersion: number | null;
-      maxElectionId: ElectionId | null;
+      maxElectionId: ObjectIDType | null;
     };
 
     const description: TopologyDescription = {
@@ -636,5 +638,17 @@ export class Topology {
       maxElectionId: this.#maxElectionId,
     };
     return description;
+  }
+
+  servers() {
+    return Array.from(this.#serverDescriptions.entries());
+  }
+
+  getMaster(): [string, ServerDescription] | undefined {
+    for (const [hostAndPort, serverDescription] of this.#serverDescriptions) {
+      if (serverDescription.type === "RSPrimary") {
+        return [hostAndPort, serverDescription];
+      }
+    }
   }
 }

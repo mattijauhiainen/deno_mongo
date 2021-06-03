@@ -4,23 +4,10 @@ import { WireProtocol } from "./protocol/mod.ts";
 import { assert } from "../deps.ts";
 import { AuthContext, ScramAuthPlugin, X509AuthPlugin } from "./auth/mod.ts";
 import { ConnectOptions } from "./types.ts";
-
-export type ServerState =
-  | "Unknown"
-  | "Standalone"
-  | "Mongos"
-  | "PossiblePrimary"
-  | "RSPrimary"
-  | "RSSecondary"
-  | "RSArbiter"
-  | "RSOther"
-  | "RSGhost"
-  | "LoadBalanced";
-
-type OnDiscovery = (hostString: string) => Promise<void>;
+import { IsMasterResponse } from "./topology.ts";
+import * as logger from "./logger.ts";
 
 export class MongoServer {
-  state: ServerState = "Unknown";
   protocol?: WireProtocol;
 
   #host: string;
@@ -34,13 +21,17 @@ export class MongoServer {
     this.#options = options;
   }
 
-  async init(onDiscovery?: OnDiscovery) {
+  get hostAndPort(): string {
+    return `${this.#host}:${this.#port}`;
+  }
+
+  async init() {
     await this.connect();
     await this.authenticate();
-    await this.updateState(onDiscovery);
   }
 
   async connect() {
+    logger.info(`Connecting to ${this.hostAndPort}`);
     const denoConnectOps: DenoConnectOptions = {
       hostname: this.#host,
       port: this.#port,
@@ -63,9 +54,11 @@ export class MongoServer {
     } else {
       this.#connection = await Deno.connect(denoConnectOps);
     }
+    logger.info(`Connected to ${this.hostAndPort}`);
   }
 
   private async authenticate() {
+    logger.info(`Authenticating to ${this.hostAndPort}`);
     assert(this.#connection, "Tried to authenticate when not connected");
     const protocol = new WireProtocol(this.#connection);
     if (this.#options.credential) {
@@ -97,24 +90,16 @@ export class MongoServer {
       await protocol.connect();
     }
     this.protocol = protocol;
+    logger.info(`Authenticated to ${this.hostAndPort}`);
   }
 
-  private async updateState() {
+  async updateState(): Promise<IsMasterResponse> {
     assert(this.protocol, "Tried to poll for ismaster while not authenticated");
     const response = await this.protocol.commandSingle(
-      "admin",
-      { ismaster: 1 }
-    );
-    console.log(response);
-    if (response.secondary === true && !!response.setName) {
-      this.state = "RSSecondary";
-    } else if (response.isWritablePrimary === true && !!response.setName) {
-      this.state = "RSPrimary";
-    } else if (response.arbiterOnly === true && !!response.setName) {
-      this.state = "RSArbiter";
-    } else {
-      this.state = "Unknown";
-    }
+      "admin", // TODO: Which db this should run on?
+      { ismaster: 1 },
+    ) as IsMasterResponse; // TODO: How's the error response returned?
+    return response;
   }
 
   close() {
@@ -123,7 +108,7 @@ export class MongoServer {
   }
 
   toString() {
-    return `${this.#host}:${this.#port}\t${this.state} connected: ${!!this
+    return `${this.#host}:${this.#port}\tconnected: ${!!this
       .#connection}`;
   }
 }

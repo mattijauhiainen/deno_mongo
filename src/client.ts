@@ -21,6 +21,7 @@ export class MongoClient {
       await cluster.connect();
       this.#cluster = cluster;
     } catch (e) {
+      console.log(e.trace);
       throw new MongoError(`Connection failed: ${e.message || e}`);
     }
     return this.database((options as ConnectOptions).db);
@@ -59,6 +60,6 @@ export class MongoClient {
   }
 
   toString() {
-    return this.#cluster?.toString() || "Unitialized client"
+    return this.#cluster?.toString() || "Unitialized client";
   }
 }

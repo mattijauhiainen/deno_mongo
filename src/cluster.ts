@@ -1,6 +1,8 @@
 import { ConnectOptions } from "./types.ts";
 import { assert } from "../deps.ts";
-import { MongoServer, ServerState } from "./mongoServer.ts";
+import { MongoServer } from "./mongoServer.ts";
+import { Topology } from "./topology.ts";
+import { Monitor } from "./monitor.ts";
 
 export interface DenoConnectOptions {
   hostname: string;
@@ -9,51 +11,43 @@ export interface DenoConnectOptions {
 }
 
 export class Cluster {
-  #servers: Map<string, MongoServer> = new Map();
+  #monitors: Map<string, Monitor> = new Map();
   #options: ConnectOptions;
+  #topology: Topology;
 
   constructor(options: ConnectOptions) {
     this.#options = options;
-    const serverConfigs = options.servers;
-    serverConfigs.forEach((serverConfig) =>
-      this.#servers.set(
-        `${serverConfig.host}:${serverConfig.port}`,
-        new MongoServer(
-          serverConfig.host,
-          serverConfig.port,
-          options,
-        ),
-      )
+    this.#topology = new Topology(
+      options.servers.map((s) => ({
+        host: s.host.replace(/\.$/, ""), // TODO: Why there is a . at the end of Atlas resolved URIs?
+        port: s.port,
+      })),
+      options,
     );
+    this.#topology.servers().forEach(([hostAndPort]) => {
+      const host = hostAndPort.split(":")[0];
+      const port = Number.parseInt(hostAndPort.split(":")[1]);
+      this.#monitors.set(
+        hostAndPort,
+        new Monitor(
+          new MongoServer(host, port, this.#options),
+          (response) =>
+            this.#topology.updateServerDescription(hostAndPort, response),
+        ),
+      );
+    });
   }
 
   async connect() {
     await Promise.all(
-      Array.from(this.#servers.values()).map((server) =>
-        server.init((server) => this.onDiscovery(server))
-      ),
+      Array.from(this.#monitors.values()).map((monitor) => monitor.open()),
     );
-  }
-
-  async onDiscovery(hostString: string) {
-    const key = hostString;
-    const host = hostString.split(":")[0];
-    const port = Number.parseInt(hostString.split(":")[1]) || 27017;
-    if (this.#servers.has(key)) return;
-    const discoveredInstance = new MongoServer(
-      host,
-      port,
-      this.#options,
-    );
-    this.#servers.set(key, discoveredInstance);
-    await discoveredInstance.init();
   }
 
   getMaster() {
-    const masterStates: ServerState[] = ["Standalone", "RSPrimary"];
-    return Array.from(this.#servers.values()).find((server) =>
-      masterStates.includes(server.state)
-    );
+    const masterHostAndPort = this.#topology.getMaster()?.[0];
+    assert(masterHostAndPort, "No writable primary found");
+    return this.#monitors.get(masterHostAndPort)?.server;
   }
 
   get protocol() {
@@ -63,11 +57,15 @@ export class Cluster {
   }
 
   close() {
-    this.#servers.forEach((server) => server.close());
+    for (const [_, monitor] of this.#monitors) {
+      monitor.close();
+    }
   }
 
   toString() {
-    return Array.from(this.#servers.values()).map((server) => server.toString())
+    return Array.from(this.#monitors.values()).map((server) =>
+      server.toString()
+    )
       .join("\n");
   }
 }

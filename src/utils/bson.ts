@@ -11,3 +11,5 @@ export function deserializeBson(buffer: Uint8Array): Bson.Document {
 export function ObjectId(oid: string): Bson.ObjectId {
   return new Bson.ObjectID(oid);
 }
+
+export type ObjectIDType = Bson.ObjectID;
