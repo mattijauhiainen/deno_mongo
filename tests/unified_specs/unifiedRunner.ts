@@ -43,94 +43,9 @@ function getSpecs(
 
 export default function unifiedTests() {
   const specDir = "./tests/unified_specs";
-  const rsSamples = getSpecs(
-    `${specDir}/rs`,
-    [
-      /Primary becomes mongos/,
-      /Discover ghost with replicaSet URI option/,
-      /Incompatible ghost/,
-      /Member brought up as standalone/,
-      /Primary with older topologyVersion/,
-      /Wrong setName/,
-      /Secondary wrong setName with primary/,
-      /Secondary with mismatched 'me' tells us who the primary is/,
-      /Primary changes setName/,
-      /Member removed by reconfig/,
-      /setVersion is ignored if there is no electionId/,
-      /Discover RSOther with directConnection URI option/,
-      /Secondary mismatched me/,
-      /Primary wrong setName/,
-      /Discover primary with directConnection URI option/,
-      /Discover arbiters with replicaSet URI option/,
-      /Discover passives with directConnection URI option/,
-      /Primary mismatched me/,
-      /Discover ghost with directConnection URI option/,
-      /Replica set case normalization/,
-      /Replica set member with large minWireVersion/,
-      /Replica set discovery/,
-      /New primary with equal electionId/,
-      /Primary mismatched me is not removed/,
-      /Host list differs from seeds/,
-      /Disconnected from primary$/,
-      /Discover secondary with directConnection URI option/,
-      /Discover RSOther with replicaSet URI option/,
-      /Primary becomes a secondary with wrong setName/,
-      /Secondary wrong setName/,
-      /Parse logicalSessionTimeoutMinutes from replica set/,
-      /Primary becomes ghost/,
-      /Replica set mixed case normalization/,
-      /Record max setVersion, even from primary without electionId/,
-      /New primary$/,
-      /Primary reports a new member/,
-      /Replica set member and an unknown server/,
-      /Replica set member with default maxWireVersion of 0/,
-      /Primary becomes standalone/,
-      /Repeated ismaster response must be processed/,
-      /Secondary's host list is not authoritative/,
-      /Discover secondary with replicaSet URI option/,
-      /Incompatible arbiter/,
-      /New primary with wrong setName/,
-      /Disconnected from primary, reject primary with stale electionId/,
-      /Primary to no primary with mismatched me/,
-      /Disconnected from primary, reject primary with stale setVersion/,
-      /Primary with equal topologyVersion/,
-      /Unexpected mongos/,
-      /Non replicaSet member responds/,
-      /Response from removed server/,
-      /New primary$/,
-      /Discover hidden with replicaSet URI option/,
-      /Primary with newer topologyVersion/,
-      /New primary with greater setVersion/,
-      /Discover hidden with directConnection URI option/,
-      /Incompatible other/,
-      /New primary with greater setVersion and electionId/,
-      /Primaries with and without electionIds/,
-      /replicaSet URI option causes starting topology to be RSNP/,
-      /Replica set member with large maxWireVersion/,
-      /Discover arbiters with directConnection URI option/,
-      /Discover passives with replicaSet URI option/,
-      /Discover primary with replicaSet URI optio/,
-    ],
-  );
-
-  const shardedSamples = getSpecs(
-    `${specDir}/sharded`,
-    [
-      /Parse logicalSessionTimeoutMinutes from mongoses/,
-      /Non-Mongos server in sharded cluster/,
-      /Multiple mongoses with large minWireVersion/,
-      /Discover single mongos/,
-      /Normalize URI case/,
-      /Multiple mongoses with default maxWireVersion of 0/,
-      /Multiple mongoses/,
-      /Mongos disconnect/,
-      /Multiple mongoses with large maxWireVersion/,
-    ],
-  );
-
-  const singleSamples = getSpecs(
-    `${specDir}/single`,
-  );
+  const rsSamples = getSpecs(`${specDir}/rs`);
+  const shardedSamples = getSpecs(`${specDir}/sharded`);
+  const singleSamples = getSpecs(`${specDir}/single`);
 
   const errorsSamples = getSpecs(
     `${specDir}/errors`,
