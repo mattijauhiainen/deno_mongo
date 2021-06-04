@@ -2,6 +2,9 @@ import { MongoServer } from "./mongoServer.ts";
 import { IsMasterResponse } from "./topology.ts";
 import * as logger from "./logger.ts";
 
+// TODO: Get from connect options, cap minimum value with minHeartbeatFrequencyMS
+const HEARTBEAT_FREQUENCY_MS = 10_000;
+
 async function timed<T>(op: () => Promise<T>): Promise<[T, number]> {
   const t1 = performance.now();
   const response = await op();
@@ -29,7 +32,8 @@ export class Monitor {
     logger.info(`Initial poll ${this.server.hostAndPort}`);
     await this.poll({ force: true });
     logger.info(`Starting poller for ${this.server.hostAndPort}`);
-    this.#intervalHandle = setInterval(this.poll, 10_000);
+    // TODO: Should be HBFMS from the finish of previous poll, not interval
+    this.#intervalHandle = setInterval(this.poll, HEARTBEAT_FREQUENCY_MS);
   }
 
   poll = async ({ force } = { force: false }) => {
