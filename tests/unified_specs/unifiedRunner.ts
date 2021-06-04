@@ -1,4 +1,4 @@
-import { assertEquals, parseYaml } from "../test.deps.ts";
+import { assertEquals, existsSync, parseYaml } from "../test.deps.ts";
 import { parse } from "../../src/utils/uri.ts";
 import { ObjectId } from "../../src/utils/bson.ts";
 
@@ -25,6 +25,9 @@ function getSpecs(
   dir: string,
   specsToRun: RegExp[] = [],
 ): TestSample[] {
+  if (!existsSync(dir)) {
+    throw new Error(`Could not find the test samples in directory '${dir}'`);
+  }
   const samples = Array.from(Deno.readDirSync(dir)).filter((file) =>
     file.isFile && /.yml$/.test(file.name)
   )
@@ -38,9 +41,8 @@ function getSpecs(
     );
 }
 
-async function runSpec() {
-  const specDir =
-    "/Users/matti/work/rebootramen/deno_scrapers/deno_mongo/tests/unified_specs";
+export default function unifiedTests() {
+  const specDir = "./tests/unified_specs";
   const rsSamples = getSpecs(
     `${specDir}/rs`,
     [
@@ -223,72 +225,63 @@ async function runSpec() {
     ...errorsSamples,
   ];
 
-  const failures: string[] = [];
   for (const testSample of samplesToRun) {
-    console.log(`${testSample.description}...`);
-    const options = await parse(testSample.uri);
-    const topology = new Topology(options.servers, options);
-    const ranPhases: string[] = [];
-    try {
-      testSample.phases.forEach((phase, phaseIndex) => {
-        ranPhases.push(phase.description || `Phase ${phaseIndex}`);
-        if (phase.responses) {
-          for (const response of phase.responses) {
-            topology.updateServerDescription(
-              response[0] as string,
-              parseObjects(response[1]),
+    Deno.test({
+      name: `UNIFIED: ${testSample.description}`,
+      async fn() {
+        const options = await parse(testSample.uri);
+        const topology = new Topology(options.servers, options);
+        const ranPhases: string[] = [];
+        try {
+          testSample.phases.forEach((phase, phaseIndex) => {
+            ranPhases.push(phase.description || `Phase ${phaseIndex}`);
+            if (phase.responses) {
+              for (const response of phase.responses) {
+                topology.updateServerDescription(
+                  response[0] as string,
+                  parseObjects(response[1]),
+                );
+              }
+            } else if (phase.applicationErrors) {
+              for (const error of phase.applicationErrors) {
+                if (error.response) {
+                  error.response = parseObjects(error.response);
+                }
+                topology.handleError(error);
+              }
+            }
+            const expected = parseObjects(phase.outcome);
+            if (expected?.maxElectionId?.$oid) {
+              expected.maxElectionId = ObjectId(expected.maxElectionId.$oid);
+            }
+            for (const server of Object.values(expected.servers)) {
+              const s = parseObjects(server);
+              delete s.pool;
+            }
+            const actual = {};
+            const pathsToCheck = getPaths(phase.outcome).filter((path) =>
+              !/.*pool.generation$/.test(path)
             );
-          }
-        } else if (phase.applicationErrors) {
-          for (const error of phase.applicationErrors) {
-            if (error.response) error.response = parseObjects(error.response);
-            topology.handleError(error);
-          }
-        }
-        const expected = parseObjects(phase.outcome);
-        if (expected?.maxElectionId?.$oid) {
-          expected.maxElectionId = ObjectId(expected.maxElectionId.$oid);
-        }
-        for (const server of Object.values(expected.servers)) {
-          const s = parseObjects(server);
-          delete s.pool;
-        }
-        const actual = {};
-        const pathsToCheck = getPaths(phase.outcome).filter((path) =>
-          !/.*pool.generation$/.test(path)
-        );
-        pathsToCheck.forEach((path) => pick(topology.describe(), actual, path));
+            pathsToCheck.forEach((path) =>
+              pick(topology.describe(), actual, path)
+            );
 
-        assertEquals(actual, expected);
-      });
-      console.log("OK");
-    } catch (error) {
-      const dbgMessage = `Final topology:
-${JSON.stringify(topology.describe(), null, 2)}
-
-Test sample:
+            assertEquals(actual, expected);
+          });
+        } catch (error) {
+          const dbgMessage = `Test sample:
 ${JSON.stringify(testSample, null, 2)}
 
 Failed sample "${testSample.description}"
   Phases:
   ${ranPhases.slice(-1).join(" ...ok \n")}
   ${ranPhases[ranPhases.length - 1]} FAILED
-
-${error}
 `;
-      failures.push(dbgMessage);
-      console.log("FAIL");
-    }
-  }
-  if (failures.length > 0) {
-    console.log(failures.join("\n"));
-
-    console.log(
-      `Failed ${failures.length} case(s) of ${samplesToRun.length} test cases`,
-    );
-    Deno.exit(1);
-  } else {
-    console.log(`\nPassed all ${samplesToRun.length} cases`);
+          error.message = dbgMessage + error.message;
+          throw error;
+        }
+      },
+    });
   }
 }
 
@@ -356,5 +349,3 @@ function parseObjects(
   }
   return object;
 }
-
-runSpec();
