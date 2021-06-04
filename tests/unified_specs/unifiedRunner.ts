@@ -276,8 +276,6 @@ Failed sample "${testSample.description}"
 
 ${error}
 `;
-      // console.log(JSON.stringify(testSample, null, 2));
-      // console.log(JSON.stringify(topology.describe(), null, 2));
       failures.push(dbgMessage);
       console.log("FAIL");
     }
