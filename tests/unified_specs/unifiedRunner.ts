@@ -1,7 +1,5 @@
-import { assertEquals } from "../test.deps.ts";
+import { assertEquals, parseYaml } from "../test.deps.ts";
 import { parse } from "../../src/utils/uri.ts";
-// TODO: Fix import
-import { parse as parseYaml } from "https://deno.land/std/encoding/yaml.ts";
 import { ObjectId } from "../../src/utils/bson.ts";
 
 import {
