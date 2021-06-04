@@ -12,3 +12,4 @@ export {
   assert,
   assertEquals,
 } from "https://deno.land/std@0.83.0/testing/asserts.ts";
+export { format } from "https://deno.land/std@0.95.0/datetime/mod.ts";

@@ -8,7 +8,7 @@ import {
   ApplicationError,
   IsMasterResponse,
   Topology,
-} from "../../src/Topology.ts";
+} from "../../src/topology.ts";
 
 interface TestSample {
   description: string;
@@ -226,6 +226,7 @@ async function runSpec() {
     ...errorsSamples,
   ];
 
+  // TODO: Collect all failures instead of crashing on first failing spec
   for (const testSample of samplesToRun) {
     console.log("************ start ************");
     console.log(`${testSample.description}...`);

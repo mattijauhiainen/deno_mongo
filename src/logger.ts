@@ -1,5 +1,4 @@
-// TODO: Move to deps
-import { format } from "https://deno.land/std@0.95.0/datetime/mod.ts";
+import { format } from "../deps.ts";
 
 const loggingEnabled = Deno.env.get("ENABLE_MONGO_LOGGING") === "true" ?? false;
 // TODO: Use logging library
