@@ -498,7 +498,7 @@ export class Topology {
       return;
     }
 
-    if (!this.getPrimary()) {
+    if (!this.getRSPrimary()) {
       this.#type = "ReplicaSetNoPrimary";
       if (serverDescription.primary) {
         const possiblePrimary = this.#serverDescriptions.get(
@@ -536,7 +536,7 @@ export class Topology {
         this.setDefaultServerDescription(peerHostAndPort)
       );
 
-    if (!this.getPrimary()) {
+    if (!this.getRSPrimary()) {
       this.#type = "ReplicaSetNoPrimary";
       if (serverDescription.primary) {
         const possiblePrimary = this.#serverDescriptions.get(
@@ -589,7 +589,7 @@ export class Topology {
     }
   }
 
-  private getPrimary() {
+  private getRSPrimary() {
     for (const desc of this.#serverDescriptions.values()) {
       if (desc.type === "RSPrimary") return desc;
     }
@@ -646,9 +646,28 @@ export class Topology {
 
   getMaster(): [string, ServerDescription] | undefined {
     for (const [hostAndPort, serverDescription] of this.#serverDescriptions) {
-      if (serverDescription.type === "RSPrimary") {
+      if (
+        this.#type === "ReplicaSetWithPrimary" &&
+        serverDescription.type === "RSPrimary"
+      ) {
         return [hostAndPort, serverDescription];
       }
+      if (this.#type === "Single" && serverDescription.type === "Standalone") {
+        return [hostAndPort, serverDescription];
+      }
+      if (this.#type === "Sharded" && serverDescription.type === "Mongos") {
+        return [hostAndPort, serverDescription];
+      }
+      // TODO: Handle loadbalanced
     }
+  }
+
+  toString() {
+    let str = "";
+    for (const [hostAndPort, desc] of this.#serverDescriptions) {
+      str += `${hostAndPort}: ${desc.type}\n`;
+    }
+
+    return str;
   }
 }

@@ -8,8 +8,11 @@ export function testWithClient(
 ) {
   Deno.test(name, async () => {
     const client = await getClient();
-    await fn(client);
-    client.close();
+    try {
+      await fn(client);
+    } finally {
+      client.close();
+    }
   });
 }
 
