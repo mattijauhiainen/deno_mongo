@@ -30,7 +30,6 @@ function getSpecs(
   )
     .map((file) => Deno.readTextFileSync(`${dir}/${file.name}`))
     .map((text) => parseYaml(text) as TestSample);
-  console.log(samples.map((sample) => sample.description));
 
   return samples
     .filter((specDesc) =>
@@ -224,28 +223,28 @@ async function runSpec() {
     ...errorsSamples,
   ];
 
-  // TODO: Collect all failures instead of crashing on first failing spec
+  const failures: string[] = [];
   for (const testSample of samplesToRun) {
-    console.log("************ start ************");
     console.log(`${testSample.description}...`);
     const options = await parse(testSample.uri);
     const topology = new Topology(options.servers, options);
-    testSample.phases.forEach((phase, phaseIndex) => {
-      console.log(phase.description ?? `\tPhase ${phaseIndex + 1}`);
-      if (phase.responses) {
-        for (const response of phase.responses) {
-          topology.updateServerDescription(
-            response[0] as string,
-            parseObjects(response[1]),
-          );
+    const ranPhases: string[] = [];
+    try {
+      testSample.phases.forEach((phase, phaseIndex) => {
+        ranPhases.push(phase.description || `Phase ${phaseIndex}`);
+        if (phase.responses) {
+          for (const response of phase.responses) {
+            topology.updateServerDescription(
+              response[0] as string,
+              parseObjects(response[1]),
+            );
+          }
+        } else if (phase.applicationErrors) {
+          for (const error of phase.applicationErrors) {
+            if (error.response) error.response = parseObjects(error.response);
+            topology.handleError(error);
+          }
         }
-      } else if (phase.applicationErrors) {
-        for (const error of phase.applicationErrors) {
-          if (error.response) error.response = parseObjects(error.response);
-          topology.handleError(error);
-        }
-      }
-      try {
         const expected = parseObjects(phase.outcome);
         if (expected?.maxElectionId?.$oid) {
           expected.maxElectionId = ObjectId(expected.maxElectionId.$oid);
@@ -261,13 +260,37 @@ async function runSpec() {
         pathsToCheck.forEach((path) => pick(topology.describe(), actual, path));
 
         assertEquals(actual, expected);
-      } catch (error) {
-        console.log(JSON.stringify(testSample, null, 2));
-        console.log(JSON.stringify(topology.describe(), null, 2));
-        throw error;
-      }
-    });
-    console.log("############# ok ##############");
+      });
+      console.log("OK");
+    } catch (error) {
+      const dbgMessage = `Final topology:
+${JSON.stringify(topology.describe(), null, 2)}
+
+Test sample:
+${JSON.stringify(testSample, null, 2)}
+
+Failed sample "${testSample.description}"
+  Phases:
+  ${ranPhases.slice(-1).join(" ...ok \n")}
+  ${ranPhases[ranPhases.length - 1]} FAILED
+
+${error}
+`;
+      // console.log(JSON.stringify(testSample, null, 2));
+      // console.log(JSON.stringify(topology.describe(), null, 2));
+      failures.push(dbgMessage);
+      console.log("FAIL");
+    }
+  }
+  if (failures.length > 0) {
+    console.log(failures.join("\n"));
+
+    console.log(
+      `Failed ${failures.length} case(s) of ${samplesToRun.length} test cases`,
+    );
+    Deno.exit(1);
+  } else {
+    console.log(`\nPassed all ${samplesToRun.length} cases`);
   }
 }
 
